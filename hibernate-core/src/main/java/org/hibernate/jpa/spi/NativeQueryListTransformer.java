@@ -4,6 +4,8 @@ import jakarta.annotation.Nonnull;
 
 import org.hibernate.query.TupleTransformer;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -20,6 +22,6 @@ public class NativeQueryListTransformer implements TupleTransformer<List<Object>
 	@Override
 	@Nonnull
 	public List<Object> transformTuple(@Nonnull Object[] tuple, @Nonnull String[] aliases) {
-		return List.of( tuple );
+		return Collections.unmodifiableList( Arrays.asList( tuple.clone() ) );
 	}
 }

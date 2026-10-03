@@ -5,13 +5,16 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Tuple;
 import org.hibernate.testing.orm.junit.DomainModel;
+import org.hibernate.testing.orm.junit.JiraKey;
 import org.hibernate.testing.orm.junit.SessionFactory;
 import org.hibernate.testing.orm.junit.SessionFactoryScope;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @DomainModel(
@@ -172,6 +175,34 @@ public class ImplicitInstantiationTest2 {
 		);
 	}
 
+
+	@Test
+	@JiraKey( "HHH-20328" )
+	public void testListInstantiationWithNullAttribute(SessionFactoryScope scope) {
+		scope.inTransaction( session -> {
+			session.persist( new Thing( 1L, null ) );
+			List<?> result = assertDoesNotThrow( () -> session.createSelectionQuery(
+					"select name from Thing", List.class
+			).getSingleResult() );
+			assertEquals( Arrays.asList( (Object) null ), result );
+			session.getTransaction().setRollbackOnly();
+		} );
+	}
+
+	@Test
+	@JiraKey( "HHH-20328" )
+	public void testSqlListInstantiationWithNullAttribute(SessionFactoryScope scope) {
+		scope.inTransaction( session -> {
+			session.persist( new Thing( 1L, null ) );
+			List<?> result = assertDoesNotThrow( () -> session.createNativeQuery(
+							"select name from thingy_table", List.class )
+							.addScalar( "name", String.class )
+							.addSynchronizedEntityClass( Thing.class )
+							.getSingleResult() );
+			assertEquals( Arrays.asList( (Object) null ), result );
+			session.getTransaction().setRollbackOnly();
+		} );
+	}
 
 	@Entity(name = "Thing")
 	@Table(name = "thingy_table")

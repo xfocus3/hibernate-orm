@@ -2,6 +2,8 @@ package org.hibernate.sql.results.internal;
 
 import org.hibernate.sql.results.spi.RowTransformer;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -23,6 +25,6 @@ public class RowTransformerListImpl<T> implements RowTransformer<List<Object>> {
 
 	@Override
 	public List<Object> transformRow(Object[] row) {
-		return List.of( row );
+		return Collections.unmodifiableList( Arrays.asList( row.clone() ) );
 	}
 }
