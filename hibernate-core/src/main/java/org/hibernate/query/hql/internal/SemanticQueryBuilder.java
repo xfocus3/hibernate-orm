@@ -4584,7 +4584,7 @@ public class SemanticQueryBuilder<R> extends HqlParserBaseVisitor<Object> implem
 		}
 		return functionTemplate.generateSqmExpression(
 				functionArguments,
-				returnableType,
+				ctx.castTarget() == null ? null : returnableType,
 				queryEngine()
 		);
 	}
