@@ -230,8 +230,10 @@ public class DefaultFlushEntityEventListener implements FlushEntityEventListener
 				final Object entity = event.getEntity();
 				processIfSelfDirtinessTracker( entity, SelfDirtinessTracker::$$_hibernate_clearDirtyAttributes );
 				processIfManagedEntity( entity, DefaultFlushEntityEventListener::useTracker );
-				event.getFactory().getCustomEntityDirtinessStrategy()
-						.resetDirty( entity, entry.getPersister(), event.getSession() );
+				final var strategy = event.getFactory().getCustomEntityDirtinessStrategy();
+				if ( strategy.canDirtyCheck( entity, entry.getPersister(), event.getSession() ) ) {
+					strategy.resetDirty( entity, entry.getPersister(), event.getSession() );
+				}
 				return false;
 			}
 		}
@@ -632,6 +634,13 @@ public class DefaultFlushEntityEventListener implements FlushEntityEventListener
 
 	@Nullable
 	private static int[] getDirtyPropertiesFromCustomEntityDirtinessStrategy(@Nonnull FlushEntityEvent event) {
+		final var strategy = event.getFactory().getCustomEntityDirtinessStrategy();
+		final Object entity = event.getEntity();
+		final var persister = event.getEntityEntry().getPersister();
+		final var session = event.getSession();
+		if ( !strategy.canDirtyCheck( entity, persister, session ) ) {
+			return null;
+		}
 		// see if the custom dirtiness strategy can tell us...
 		class DirtyCheckContextImpl implements CustomEntityDirtinessStrategy.DirtyCheckContext {
 			private int[] found;
@@ -644,8 +653,7 @@ public class DefaultFlushEntityEventListener implements FlushEntityEventListener
 			}
 		}
 		final var context = new DirtyCheckContextImpl();
-		event.getFactory().getCustomEntityDirtinessStrategy()
-				.findDirty( event.getEntity(), event.getEntityEntry().getPersister(), event.getSession(), context );
+		strategy.findDirty( entity, persister, session, context );
 		return context.found;
 	}
 

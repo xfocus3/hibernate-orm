@@ -54,6 +54,24 @@ This section describes changes to contracts (classes, interfaces, methods, etc.)
 
 This section describes changes to contracts (classes, interfaces, methods, etc.) which are considered https://hibernate.org/community/compatibility-policy/#spi[SPI].
 
+[[custom-entity-dirtiness-strategy]]
+=== `CustomEntityDirtinessStrategy` capability checks
+
+Hibernate now checks `CustomEntityDirtinessStrategy.canDirtyCheck()` before calling
+`findDirty()` or `resetDirty()`, as well as before calling `isDirty()`.
+Returning `false` declines all three callbacks for that entity at that point,
+allowing entities unsupported by the strategy to use normal dirty checking.
+This makes the callback lifecycle consistent with the strategy example in the Javadoc.
+
+Previously, only `isDirty()` was guarded by this capability check.
+Implementations which relied on `findDirty()` or `resetDirty()` being called despite
+returning `false` must now return `true` for entities requiring those callbacks,
+and must also be able to handle `isDirty()` for those entities.
+`canDirtyCheck()` may be called multiple times, including before resetting dirty state
+after loading or flushing; returning `true` no longer implies that `isDirty()` is the next callback.
+A supported strategy may still delegate attribute checking to Hibernate by not invoking
+`DirtyCheckContext.doDirtyChecking()` from `findDirty()`.
+
 [[persistence-context]]
 === Removed `PersistenceContext.reentrantSafeEntityEntries()`
 

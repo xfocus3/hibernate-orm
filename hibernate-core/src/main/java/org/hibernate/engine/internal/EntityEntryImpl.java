@@ -282,9 +282,11 @@ public final class EntityEntryImpl implements Serializable, EntityEntry {
 		processIfSelfDirtinessTracker( entity, EntityEntryImpl::clearDirtyAttributes );
 		processIfManagedEntity( entity, EntityEntryImpl::useTracker );
 
-		final var session = getPersistenceContext().getSession();
-		session.getFactory().getCustomEntityDirtinessStrategy()
-				.resetDirty( entity, persister, (SessionImplementor) session );
+		final var session = (SessionImplementor) getPersistenceContext().getSession();
+		final var strategy = session.getFactory().getCustomEntityDirtinessStrategy();
+		if ( strategy.canDirtyCheck( entity, persister, session ) ) {
+			strategy.resetDirty( entity, persister, session );
+		}
 	}
 
 	@Override
@@ -293,8 +295,10 @@ public final class EntityEntryImpl implements Serializable, EntityEntry {
 		processIfManagedEntity( entity, EntityEntryImpl::useTracker );
 
 		if ( persister.isMutable() && persistenceContext.getSession() instanceof SessionImplementor session ) {
-			session.getFactory().getCustomEntityDirtinessStrategy()
-					.resetDirty( entity, persister, session );
+			final var strategy = session.getFactory().getCustomEntityDirtinessStrategy();
+			if ( strategy.canDirtyCheck( entity, persister, session ) ) {
+				strategy.resetDirty( entity, persister, session );
+			}
 		}
 	}
 

@@ -54,8 +54,12 @@ import org.hibernate.type.Type;
  */
 public interface CustomEntityDirtinessStrategy {
 	/**
-	 * Is this strategy capable of telling whether the given entity is dirty?  A return of {@code true} means that
-	 * {@link #isDirty} will be called next as the definitive means to determine whether the entity is dirty.
+	 * Is this strategy capable of handling dirty checking and dirty state for the given entity?
+	 * A return of {@code false} means that Hibernate will not call {@link #isDirty}, {@link #findDirty},
+	 * or {@link #resetDirty} for this entity at this point, and will use its normal dirty checking instead.
+	 * <p>
+	 * This method is called before each of those callbacks and may be called multiple times during the entity
+	 * lifecycle, including before resetting dirty state after loading or flushing the entity.
 	 *
 	 * @param entity The entity to be checked
 	 * @param persister The persister corresponding to the given entity
@@ -81,7 +85,8 @@ public interface CustomEntityDirtinessStrategy {
 
 	/**
 	 * Callback used by Hibernate to signal that the entity dirty flag should be cleared.  Generally this
-	 * happens after previous dirty changes were written to the database.
+	 * happens after the entity is loaded or previous dirty changes were written to the database.
+	 * Only called if {@link #canDirtyCheck} returned {@code true}.
 	 *
 	 * @param entity The entity to reset
 	 * @param persister The persister corresponding to the given entity
@@ -94,6 +99,8 @@ public interface CustomEntityDirtinessStrategy {
 	 * Callback used to hook into Hibernate algorithm for determination of which attributes have changed.  Applications
 	 * wanting to hook in to this would call back into the given {@link DirtyCheckContext#doDirtyChecking}
 	 * method, passing along an appropriate {@link AttributeChecker} implementation.
+	 * Only called if {@link #canDirtyCheck} returned {@code true}. If the strategy does not call
+	 * {@link DirtyCheckContext#doDirtyChecking}, Hibernate uses its normal dirty checking instead.
 	 *
 	 * @param entity The entity being checked
 	 * @param persister The persister corresponding to the given entity

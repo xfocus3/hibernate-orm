@@ -57,7 +57,7 @@ public class CustomDirtinessStrategyTest {
 			thing.setName( SUBSEQUENT_NAME );
 		} );
 
-		assertEquals( 1, Strategy.INSTANCE.canDirtyCheckCount );
+		assertEquals( 4, Strategy.INSTANCE.canDirtyCheckCount );
 		assertEquals( 1, Strategy.INSTANCE.isDirtyCount );
 		assertEquals( 2, Strategy.INSTANCE.resetDirtyCount );
 		assertEquals( 1, Strategy.INSTANCE.findDirtyCount );
@@ -89,7 +89,7 @@ public class CustomDirtinessStrategyTest {
 		}
 
 		// As we used an interceptor, the custom strategy should have been called twice to find dirty properties
-		assertEquals( 1, Strategy.INSTANCE.canDirtyCheckCount );
+		assertEquals( 5, Strategy.INSTANCE.canDirtyCheckCount );
 		assertEquals( 1, Strategy.INSTANCE.isDirtyCount );
 		assertEquals( 2, Strategy.INSTANCE.resetDirtyCount );
 		assertEquals( 2, Strategy.INSTANCE.findDirtyCount );
