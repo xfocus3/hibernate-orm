@@ -1,0 +1,15 @@
+name: HHH-20771 final fork head check
+on:
+  push:
+    branches: [sandcastle/dot-check/HHH-20771-final-fork-verify]
+permissions:
+  contents: read
+jobs:
+  verify:
+    uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
+    with:
+      target_sha: 5599a46ce77ab63c4eb994f85e4010737c15abcd
+      java_version: '25'
+      build_tool: gradle
+      database: h2
+      arguments: '["hibernate-processor:formatChecks","hibernate-processor:jakartaDataTest","--tests","org.hibernate.processor.test.data.constructormismatch.ConstructorMismatchTest","--tests","org.hibernate.processor.test.data.select.SelectionTest","--continue","-Pdb=h2"]'
