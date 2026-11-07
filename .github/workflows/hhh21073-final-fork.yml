@@ -1,0 +1,16 @@
+name: HHH-21073 final fork head check
+on:
+  push:
+    branches: [sandcastle/hhh21073-publication-20261107]
+    paths: [.github/workflows/hhh21073-final-fork.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
+    with:
+      target_sha: a65de96c0129aa8cda3b79d81dc41eaec4549432
+      arguments: '["hibernate-core:test","--rerun","--tests","org.hibernate.orm.test.paging.keybased.*","-Pdb=h2","formatChecks"]'
+      database: h2
+      java_version: '25'
+      build_tool: gradle
