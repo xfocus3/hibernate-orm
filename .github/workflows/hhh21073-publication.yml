@@ -2,6 +2,7 @@ name: Prepare reviewed HHH-21073 publication
 on:
   push:
     branches: [sandcastle/hhh21073-publication-20261107]
+    paths: [.github/workflows/hhh21073-publication.yml]
 permissions:
   contents: write
   actions: read
