@@ -1,0 +1,335 @@
+diff --git a/hibernate-core/src/main/java/org/hibernate/dialect/lock/internal/PessimisticForceIncrementLockingStrategy.java b/hibernate-core/src/main/java/org/hibernate/dialect/lock/internal/PessimisticForceIncrementLockingStrategy.java
+index dd1e1faf..dbba818e 100644
+--- a/hibernate-core/src/main/java/org/hibernate/dialect/lock/internal/PessimisticForceIncrementLockingStrategy.java
++++ b/hibernate-core/src/main/java/org/hibernate/dialect/lock/internal/PessimisticForceIncrementLockingStrategy.java
+@@ -46,7 +46,7 @@ public PessimisticForceIncrementLockingStrategy(EntityPersister lockable, LockMo
+ 	@Override
+ 	public void lock(Object id, Object version, Object object, Timeout timeout, SharedSessionContractImplementor session) {
+ 		final var entry = session.getPersistenceContextInternal().getEntry( object );
+-		OptimisticLockHelper.forceVersionIncrement( object, entry, false, session );
++		OptimisticLockHelper.forceVersionIncrementImmediately( object, entry, session );
+ 	}
+ 
+ 	/**
+diff --git a/hibernate-core/src/main/java/org/hibernate/event/internal/DefaultPostLoadEventListener.java b/hibernate-core/src/main/java/org/hibernate/event/internal/DefaultPostLoadEventListener.java
+index 3a49f3ed..821105e2 100644
+--- a/hibernate-core/src/main/java/org/hibernate/event/internal/DefaultPostLoadEventListener.java
++++ b/hibernate-core/src/main/java/org/hibernate/event/internal/DefaultPostLoadEventListener.java
+@@ -36,7 +36,7 @@ public void onPostLoad(@Nonnull PostLoadEvent event) {
+ 			if ( persister.isVersioned() ) {
+ 				switch ( lockMode ) {
+ 					case PESSIMISTIC_FORCE_INCREMENT:
+-						OptimisticLockHelper.forceVersionIncrement( entity, entry, false, session );
++						OptimisticLockHelper.forceVersionIncrementImmediately( entity, entry, session );
+ 						break;
+ 					case OPTIMISTIC_FORCE_INCREMENT:
+ 						session.getActionQueue()
+diff --git a/hibernate-core/src/main/java/org/hibernate/internal/OptimisticLockHelper.java b/hibernate-core/src/main/java/org/hibernate/internal/OptimisticLockHelper.java
+index 6ff31975..54de3d3d 100644
+--- a/hibernate-core/src/main/java/org/hibernate/internal/OptimisticLockHelper.java
++++ b/hibernate-core/src/main/java/org/hibernate/internal/OptimisticLockHelper.java
+@@ -25,7 +25,11 @@ public static void forceVersionIncrement(Object object, EntityEntry entry, Share
+ 		forceVersionIncrement( object, entry, true, session );
+ 	}
+ 
+-	public static void forceVersionIncrement(
++	public static void forceVersionIncrementImmediately(Object object, EntityEntry entry, SharedSessionContractImplementor session) {
++		forceVersionIncrement( object, entry, false, session );
++	}
++
++	private static void forceVersionIncrement(
+ 			Object object,
+ 			EntityEntry entry,
+ 			boolean batching,
+@@ -45,7 +49,9 @@ public static void forceVersionIncrement(
+ 		}, null );
+ 		final Object nextVersion;
+ 		try {
+-			nextVersion = persister.forceVersionIncrement( entry.getId(), previousVersion, batching, session );
++			nextVersion = batching
++					? persister.forceVersionIncrement( entry.getId(), previousVersion, session )
++					: persister.forceVersionIncrement( entry.getId(), previousVersion, false, session );
+ 		}
+ 		catch (RuntimeException | Error failure) {
+ 			if ( cacheLock != null ) {
+diff --git a/hibernate-core/src/main/java/org/hibernate/loader/ast/internal/LoaderHelper.java b/hibernate-core/src/main/java/org/hibernate/loader/ast/internal/LoaderHelper.java
+index 411639d1..2105b576 100644
+--- a/hibernate-core/src/main/java/org/hibernate/loader/ast/internal/LoaderHelper.java
++++ b/hibernate-core/src/main/java/org/hibernate/loader/ast/internal/LoaderHelper.java
+@@ -106,7 +106,7 @@ public static void upgradeLock(
+ 
+ 				if ( persister.isVersioned() && requestedLockMode == LockMode.PESSIMISTIC_FORCE_INCREMENT  ) {
+ 					// todo : should we check the current isolation mode explicitly?
+-					OptimisticLockHelper.forceVersionIncrement( object, entry, false, session );
++					OptimisticLockHelper.forceVersionIncrementImmediately( object, entry, session );
+ 				}
+ 				else if ( entry.isExistsInDatabase() ) {
+ 					final var eventMonitor = session.getEventMonitor();
+diff --git a/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/AbstractTemporalUpdateCoordinator.java b/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/AbstractTemporalUpdateCoordinator.java
+index 93a7eba9..e527f0d2 100644
+--- a/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/AbstractTemporalUpdateCoordinator.java
++++ b/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/AbstractTemporalUpdateCoordinator.java
+@@ -60,7 +60,12 @@ MutationOperationGroup createMutationOperationGroup(@Nonnull TableUpdateBuilderS
+ 		);
+ 	}
+ 
+-	abstract void bindVersionRestriction(@Nullable Object oldVersion, @Nonnull JdbcValueBindings jdbcValueBindings, @Nonnull String temporalTableName);
++	void bindVersionRestriction(@Nullable Object oldVersion, @Nonnull JdbcValueBindings jdbcValueBindings, @Nonnull String temporalTableName) {
++		final var versionMapping = entityPersister().getVersionMapping();
++		if ( versionMapping != null && entityPersister().optimisticLockStyle().isVersion() ) {
++			jdbcValueBindings.bindValue( oldVersion, versionMapping, ParameterUsage.RESTRICT );
++		}
++	}
+ 
+ 	void performRowEndUpdate(
+ 			@Nonnull Object entity,
+diff --git a/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/MergeCoordinatorTemporal.java b/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/MergeCoordinatorTemporal.java
+index 68e89b79..4670d2b7 100644
+--- a/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/MergeCoordinatorTemporal.java
++++ b/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/MergeCoordinatorTemporal.java
+@@ -8,9 +8,7 @@
+ import org.hibernate.Internal;
+ import org.hibernate.StaleObjectStateException;
+ import org.hibernate.engine.jdbc.batch.internal.BasicBatchKey;
+-import org.hibernate.engine.jdbc.mutation.JdbcValueBindings;
+ import org.hibernate.engine.jdbc.mutation.OperationResultChecker;
+-import org.hibernate.engine.jdbc.mutation.ParameterUsage;
+ import org.hibernate.engine.jdbc.mutation.group.PreparedStatementDetails;
+ import org.hibernate.engine.spi.SessionFactoryImplementor;
+ import org.hibernate.engine.spi.SharedSessionContractImplementor;
+@@ -163,14 +161,6 @@ private boolean currentRowExists(@Nonnull Object id, @Nonnull SharedSessionContr
+ 		}
+ 	}
+ 
+-	@Override
+-	void bindVersionRestriction(@Nullable Object oldVersion, @Nonnull JdbcValueBindings jdbcValueBindings, @Nonnull String temporalTableName) {
+-		final var versionMapping = entityPersister().getVersionMapping();
+-		if ( versionMapping != null && entityPersister().optimisticLockStyle().isVersion() ) {
+-			jdbcValueBindings.bindValue( oldVersion, versionMapping, ParameterUsage.RESTRICT );
+-		}
+-	}
+-
+ 	@Override
+ 	public void forceVersionIncrement(
+ 			@Nonnull Object id,
+diff --git a/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/UpdateCoordinatorTemporal.java b/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/UpdateCoordinatorTemporal.java
+index d16d1cb3..0cad48b3 100644
+--- a/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/UpdateCoordinatorTemporal.java
++++ b/hibernate-core/src/main/java/org/hibernate/persister/entity/mutation/UpdateCoordinatorTemporal.java
+@@ -5,8 +5,6 @@
+ 
+ import org.hibernate.Internal;
+ import org.hibernate.engine.jdbc.batch.internal.BasicBatchKey;
+-import org.hibernate.engine.jdbc.mutation.JdbcValueBindings;
+-import org.hibernate.engine.jdbc.mutation.ParameterUsage;
+ import org.hibernate.engine.spi.SessionFactoryImplementor;
+ import org.hibernate.engine.spi.SharedSessionContractImplementor;
+ import org.hibernate.generator.values.GeneratedValues;
+@@ -97,14 +95,6 @@ public GeneratedValues update(
+ 		}
+ 	}
+ 
+-	@Override
+-	void bindVersionRestriction(@Nullable Object oldVersion, @Nonnull JdbcValueBindings jdbcValueBindings, @Nonnull String temporalTableName) {
+-		final var versionMapping = entityPersister().getVersionMapping();
+-		if ( versionMapping != null && entityPersister().optimisticLockStyle().isVersion() ) {
+-			jdbcValueBindings.bindValue( oldVersion, versionMapping, ParameterUsage.RESTRICT );
+-		}
+-	}
+-
+ 	@Override
+ 	public void forceVersionIncrement(
+ 			@Nonnull Object id,
+diff --git a/hibernate-core/src/main/java/org/hibernate/sql/exec/internal/lock/FollowOnLockingAction.java b/hibernate-core/src/main/java/org/hibernate/sql/exec/internal/lock/FollowOnLockingAction.java
+index 6b973806..1ed4a0c0 100644
+--- a/hibernate-core/src/main/java/org/hibernate/sql/exec/internal/lock/FollowOnLockingAction.java
++++ b/hibernate-core/src/main/java/org/hibernate/sql/exec/internal/lock/FollowOnLockingAction.java
+@@ -150,10 +150,9 @@ protected void performPostAction(ExecutionContext executionContext, LoadedValues
+ 						tableLock.performActions( entityDetailsMap, lockingOptions, session ) );
+ 				entityDetailsMap.values().forEach( entityDetails -> {
+ 					if ( lockMode == LockMode.PESSIMISTIC_FORCE_INCREMENT ) {
+-						OptimisticLockHelper.forceVersionIncrement(
++						OptimisticLockHelper.forceVersionIncrementImmediately(
+ 								entityDetails.instance(),
+ 								entityDetails.entry(),
+-								false,
+ 								session
+ 						);
+ 					}
+diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/locking/ForceIncrementCustomPersisterTest.java b/hibernate-core/src/test/java/org/hibernate/orm/test/locking/ForceIncrementCustomPersisterTest.java
+new file mode 100644
+index 00000000..357b33a1
+--- /dev/null
++++ b/hibernate-core/src/test/java/org/hibernate/orm/test/locking/ForceIncrementCustomPersisterTest.java
+@@ -0,0 +1,136 @@
++package org.hibernate.orm.test.locking;
++
++import jakarta.persistence.Entity;
++import jakarta.persistence.Id;
++import jakarta.persistence.Table;
++import jakarta.persistence.Version;
++
++import org.hibernate.LockMode;
++import org.hibernate.Session;
++import org.hibernate.cache.spi.access.EntityDataAccess;
++import org.hibernate.cache.spi.access.NaturalIdDataAccess;
++import org.hibernate.cfg.AvailableSettings;
++import org.hibernate.engine.spi.SharedSessionContractImplementor;
++import org.hibernate.mapping.PersistentClass;
++import org.hibernate.metamodel.spi.RuntimeModelCreationContext;
++import org.hibernate.persister.entity.EntityPersister;
++import org.hibernate.persister.entity.SingleTableEntityPersister;
++import org.hibernate.persister.internal.StandardPersisterClassResolver;
++import org.hibernate.persister.spi.PersisterClassResolver;
++import org.hibernate.testing.orm.junit.DomainModel;
++import org.hibernate.testing.orm.junit.JiraKey;
++import org.hibernate.testing.orm.junit.ServiceRegistry;
++import org.hibernate.testing.orm.junit.SessionFactory;
++import org.hibernate.testing.orm.junit.SessionFactoryScope;
++import org.hibernate.testing.orm.junit.Setting;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++@DomainModel(annotatedClasses = ForceIncrementCustomPersisterTest.VersionedEntity.class)
++@ServiceRegistry(
++		settings = @Setting(name = AvailableSettings.STATEMENT_BATCH_SIZE, value = "10"),
++		services = @ServiceRegistry.Service(role = PersisterClassResolver.class, impl = ForceIncrementCustomPersisterTest.CustomPersisterResolver.class)
++)
++@SessionFactory
++@JiraKey("HHH-20417")
++public class ForceIncrementCustomPersisterTest {
++	@BeforeEach
++	void setUp(SessionFactoryScope scope) {
++		persister( scope ).increments = 0;
++		scope.inTransaction( session -> session.persist( new VersionedEntity( 1L ) ) );
++	}
++
++	@AfterEach
++	void tearDown(SessionFactoryScope scope) {
++		scope.getSessionFactory().getSchemaManager().truncate();
++	}
++
++	@Test
++	void testOptimisticIncrementUsesCustomOverride(SessionFactoryScope scope) {
++		final var persister = persister( scope );
++		scope.inTransaction( session -> {
++			final var entity = session.find( VersionedEntity.class, 1L );
++			session.lock( entity, LockMode.OPTIMISTIC_FORCE_INCREMENT );
++			session.flush();
++			assertThat( persister.increments ).isZero();
++			assertThat( entity.version ).isZero();
++			assertThat( databaseVersion( session ) ).isZero();
++		} );
++		assertThat( persister.increments ).isEqualTo( 1 );
++		scope.inTransaction( session -> {
++			assertThat( session.find( VersionedEntity.class, 1L ).version ).isEqualTo( 1L );
++			assertThat( databaseVersion( session ) ).isEqualTo( 1L );
++		} );
++	}
++
++	@Test
++	void testPessimisticIncrementExecutesImmediately(SessionFactoryScope scope) {
++		scope.inTransaction( session -> {
++			final var entity = session.find( VersionedEntity.class, 1L );
++			session.lock( entity, LockMode.PESSIMISTIC_FORCE_INCREMENT );
++			assertThat( persister( scope ).increments ).isZero();
++			assertThat( entity.version ).isEqualTo( 1L );
++			assertThat( databaseVersion( session ) ).isEqualTo( 1L );
++		} );
++	}
++
++	private static CustomPersister persister(SessionFactoryScope scope) {
++		return (CustomPersister) scope.getSessionFactory().getMappingMetamodel()
++				.getEntityDescriptor( VersionedEntity.class );
++	}
++
++	private static long databaseVersion(Session session) {
++		return session.doReturningWork( connection -> {
++			try ( var statement = connection.prepareStatement(
++					"select version from custom_force_increment where id = 1" );
++					var resultSet = statement.executeQuery() ) {
++				assertThat( resultSet.next() ).isTrue();
++				return resultSet.getLong( 1 );
++			}
++		} );
++	}
++
++	public static class CustomPersisterResolver extends StandardPersisterClassResolver {
++		@Override
++		public Class<? extends EntityPersister> singleTableEntityPersister() {
++			return CustomPersister.class;
++		}
++	}
++
++	public static class CustomPersister extends SingleTableEntityPersister {
++		private int increments;
++
++		public CustomPersister(
++				PersistentClass persistentClass,
++				EntityDataAccess cacheAccessStrategy,
++				NaturalIdDataAccess naturalIdRegionAccessStrategy,
++				RuntimeModelCreationContext creationContext) {
++			super( persistentClass, cacheAccessStrategy, naturalIdRegionAccessStrategy, creationContext );
++		}
++
++		@Override
++		public Object forceVersionIncrement(Object id, Object currentVersion, SharedSessionContractImplementor session) {
++			increments++;
++			return super.forceVersionIncrement( id, currentVersion, session );
++		}
++	}
++
++	@Entity(name = "CustomVersionedEntity")
++	@Table(name = "custom_force_increment")
++	public static class VersionedEntity {
++		@Id
++		private Long id;
++		@Version
++		private long version;
++
++		public VersionedEntity() {
++		}
++
++		VersionedEntity(Long id) {
++			this.id = id;
++		}
++	}
++}
+diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/locking/PessimisticForceIncrementBatchingTest.java b/hibernate-core/src/test/java/org/hibernate/orm/test/locking/PessimisticForceIncrementBatchingTest.java
+index 671d204a..ee9a6283 100644
+--- a/hibernate-core/src/test/java/org/hibernate/orm/test/locking/PessimisticForceIncrementBatchingTest.java
++++ b/hibernate-core/src/test/java/org/hibernate/orm/test/locking/PessimisticForceIncrementBatchingTest.java
+@@ -15,8 +15,10 @@
+ 
+ import java.util.concurrent.atomic.AtomicInteger;
+ import org.hibernate.cfg.AvailableSettings;
++import org.hibernate.testing.orm.junit.DialectFeatureChecks;
+ import org.hibernate.testing.orm.junit.DomainModel;
+ import org.hibernate.testing.orm.junit.JiraKey;
++import org.hibernate.testing.orm.junit.RequiresDialectFeature;
+ import org.hibernate.testing.orm.junit.ServiceRegistry;
+ import org.hibernate.testing.orm.junit.SessionFactory;
+ import org.hibernate.testing.orm.junit.SessionFactoryScope;
+@@ -139,6 +141,7 @@ void testRefreshExecutesImmediately(SessionFactoryScope scope) {
+ 	}
+ 
+ 	@Test
++	@RequiresDialectFeature( feature = DialectFeatureChecks.SupportsSelectLocking.class )
+ 	void testFollowOnLockExecutesImmediately(SessionFactoryScope scope) {
+ 		scope.inTransaction( session -> {
+ 			final var entity = session.createSelectionQuery( "from VersionedEntity", VersionedEntity.class )
+diff --git a/hibernate-core/src/test/java/org/hibernate/temporal/TemporalEntityTest.java b/hibernate-core/src/test/java/org/hibernate/temporal/TemporalEntityTest.java
+index 36cd6f48..b821c466 100644
+--- a/hibernate-core/src/test/java/org/hibernate/temporal/TemporalEntityTest.java
++++ b/hibernate-core/src/test/java/org/hibernate/temporal/TemporalEntityTest.java
+@@ -47,6 +47,7 @@
+ class TemporalEntityTest {
+ 
+ 	@Test
++	@RequiresDialectFeature( feature = DialectFeatureChecks.SupportsPrimaryKeyUpdate.class )
+ 	void testPessimisticForceIncrementExecutesImmediately(SessionFactoryScope scope) {
+ 		try {
+ 			scope.inTransaction( session -> {
