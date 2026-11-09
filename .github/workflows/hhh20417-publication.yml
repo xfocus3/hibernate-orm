@@ -4,7 +4,7 @@ on:
     branches: [sandcastle/hhh20417-publication-20261107]
     paths: [.github/workflows/hhh20417-publication.yml]
 permissions:
-  contents: write
+  contents: read
   actions: read
 concurrency:
   group: hhh-20417-publication-checkpoint
@@ -16,43 +16,80 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: xfocus3/hibernate-work
-          ref: 30e07c88a192526493bfcfed0a9729407726e6dc
-          path: evidence
+          ref: b2b3cb99d1a72024a804d8d58de966f4a2c1cb7c
+          path: target
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          ref: 99489d519a023b37cb83c1a89b73ae499113e089
-          fetch-depth: 0
-          path: target
+          ref: 44672f379293f4f36e8391a4d5979a53adaf99a6
+          path: request
           persist-credentials: false
-      - name: Verify tested evidence and original branch lease
+      - name: Verify completed RED and GREEN run identities
         uses: actions/github-script@v7
         with:
           script: |
-            const checked = (await github.rest.actions.getWorkflowRun({ owner: 'xfocus3', repo: 'hibernate-work', run_id: 42412488514 })).data;
-            if (checked.status !== 'completed' || checked.conclusion !== 'success' || checked.head_sha !== '30e07c88a192526493bfcfed0a9729407726e6dc' || checked.path !== '.github/workflows/hhh20417-check.yml' || checked.run_attempt !== 1) throw new Error('Exact evidence run not successful');
-            const work = (await github.rest.pulls.get({ owner: 'xfocus3', repo: 'hibernate-work', pull_number: 51 })).data;
-            if (work.state !== 'open' || work.head.sha !== 'e8ee28ce9db90c242487d6ab20d9f6383cfbf2d5') throw new Error('Reviewed work PR changed');
-            const review = (await github.rest.actions.getWorkflowRun({ owner: 'xfocus3', repo: 'hibernate-work', run_id: 42413900771 })).data;
-            if (review.status !== 'completed' || review.conclusion !== 'success') throw new Error('Original review is not successful');
-      - name: Publish only reviewed source checkpoint
-        working-directory: target
-        env:
-          GH_TOKEN: ${{ github.token }}
+            for (const [id, sha, conclusion] of [[42683468261, '51b798d693af58ed4e53d89d26820684f2d1af6f', 'failure'], [42684728549, '3847e9a3162bd37f49a960b2800f68512bce39d4', 'success']]) {
+              const run = (await github.rest.actions.getWorkflowRun({owner: 'xfocus3', repo: 'hibernate-orm', run_id: id})).data;
+              if (run.status !== 'completed' || run.conclusion !== conclusion || run.head_sha !== sha || run.path !== '.github/workflows/hhh20417-final-fork.yml' || run.run_attempt !== 1) throw new Error('Unexpected verification run identity or result: ' + id);
+            }
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-verification-42683468261
+          run-id: 42683468261
+          github-token: ${{ github.token }}
+          path: red
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-verification-42684728549
+          run-id: 42684728549
+          github-token: ${{ github.token }}
+          path: green
+      - name: Inspect XML counts, provenance, and formatter delta
         run: |
-          set -euo pipefail
-          git apply --check ../evidence/patches/HHH-20417.patch
-          git apply --index ../evidence/patches/HHH-20417.patch
-          test "$(git write-tree)" = 'bb14a3b475008746a591fbdf1215e180ddea44b4'
-          git diff --cached --check
-          git config user.name xfocus3
-          git config user.email xfocus29@gmail.com
-          git commit -m "HHH-20417 Execute pessimistic force increments immediately"
-          test "$(git show -s --format='%an <%ae>|%cn <%ce>')" = 'xfocus3 <xfocus29@gmail.com>|xfocus3 <xfocus29@gmail.com>'
-          ref=refs/heads/8.0-HHH-20417-immediate-pessimistic-increment
-          test -z "$(git ls-remote --heads origin "$ref")"
-          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-          printf '::add-mask::%s\n' "$auth"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push --force-with-lease="$ref:" origin "HEAD:$ref"
-          git rev-parse HEAD
+          python3 - <<'PY'
+          import hashlib, pathlib, re, subprocess, xml.etree.ElementTree as ET
+          base = 'b2b3cb99d1a72024a804d8d58de966f4a2c1cb7c'
+          patch_commit = '44672f379293f4f36e8391a4d5979a53adaf99a6'
+          for name, expected in [('custom-persister-red.patch', 'b0726be9479361f32b25457a7d73e6051b1c8a910c7c9229c488e73d7625e2dd'), ('maintainer-followup.patch', '9fbd15f5cee3b38abfdab900ca1186d3734da6bbd9e4f5cfe0435df6f68a75f5')]:
+              assert hashlib.sha256(pathlib.Path('request/patches', name).read_bytes()).hexdigest() == expected
+          provenance = {}
+          for side in ['red', 'green']:
+              text = pathlib.Path(side, 'verification.txt').read_text()
+              print(side.upper() + '_PROVENANCE ' + text.replace(chr(10), ' '))
+              provenance[side] = dict(line.split('=', 1) for line in text.splitlines() if '=' in line)
+              assert provenance[side]['base'] == base and provenance[side]['patch_commit'] == patch_commit
+          red_xml, = pathlib.Path('red').rglob('TEST-org.hibernate.orm.test.locking.ForceIncrementCustomPersisterTest.xml')
+          red_root = ET.parse(red_xml).getroot()
+          failed = [t for t in red_root.iter('testcase') if t.find('failure') is not None]
+          assert int(red_root.get('tests')) == 2 and int(red_root.get('failures')) == 1 and int(red_root.get('errors')) == 0
+          assert len(failed) == 1 and failed[0].get('name').startswith('testOptimisticIncrementUsesCustomOverride')
+          print('RED_FAILURE ' + failed[0].get('name') + ' ' + failed[0].find('failure').get('message', ''))
+          totals = dict.fromkeys(['tests', 'failures', 'errors', 'skipped'], 0)
+          for path in pathlib.Path('green').rglob('TEST-*.xml'):
+              root = ET.parse(path).getroot()
+              for key in totals:
+                  totals[key] += int(root.get(key, 0))
+          print('GREEN_TOTALS ' + str(totals))
+          assert totals['tests'] > 250 and totals['failures'] == 0 and totals['errors'] == 0
+          green_xml, = pathlib.Path('green').rglob('TEST-org.hibernate.orm.test.locking.ForceIncrementCustomPersisterTest.xml')
+          cases = list(ET.parse(green_xml).getroot().iter('testcase'))
+          assert len(cases) == 2 and all(t.find('failure') is None and t.find('error') is None and t.find('skipped') is None for t in cases)
+          print('GREEN_CUSTOM_PERSISTER ' + str([t.get('name') for t in cases]))
+          def git(*args):
+              return subprocess.check_output(['git', '-C', 'target', *args], text=True).strip()
+          original = pathlib.Path('request/patches/maintainer-followup.patch')
+          git('apply', '--check', str(original.resolve()))
+          git('apply', '--index', str(original.resolve()))
+          candidate_tree = git('write-tree')
+          assert candidate_tree == provenance['green']['tree']
+          git('apply', '--reverse', '--index', str(original.resolve()))
+          git('apply', '--index', str(pathlib.Path('green/verified.patch').resolve()))
+          tested_tree = git('write-tree')
+          assert tested_tree == provenance['green']['tested_tree']
+          git('diff', '--cached', '--check')
+          expected_paths = {b for a, b in re.findall(r'^diff --git a/(.*?) b/(.*?)$', original.read_text(), re.M)}
+          assert set(git('diff', '--cached', '--name-only').splitlines()) == expected_paths
+          print('TESTED_TREE ' + tested_tree)
+          print('TESTED_DIFF_STAT ' + git('diff', '--cached', '--stat'))
+          print('FORMATTER_DELTA ' + git('diff', candidate_tree, tested_tree))
+          PY
