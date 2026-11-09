@@ -11,7 +11,7 @@ jobs:
     with:
       target_sha: b2b3cb99d1a72024a804d8d58de966f4a2c1cb7c
       patch_ref: 44672f379293f4f36e8391a4d5979a53adaf99a6
-      patch_path: patches/custom-persister-red.patch
+      patch_path: patches/maintainer-followup.patch
       java_version: '25'
       build_tool: gradle
-      arguments: '["hibernate-core:test", "--rerun", "--tests", "org.hibernate.orm.test.locking.ForceIncrementCustomPersisterTest", "-Pdb=h2"]'
+      arguments: '["hibernate-core:test","--rerun","--tests","org.hibernate.orm.test.locking.*","--tests","org.hibernate.orm.test.cache.PessimisticForceIncrementCacheTest","--tests","org.hibernate.orm.test.cache.ForceIncrementCacheTest","--tests","org.hibernate.temporal.TemporalEntityTest","--tests","org.hibernate.temporal.TemporalEntityHistoryTest","--tests","org.hibernate.temporal.audit.AuditEntityTest","--tests","org.hibernate.orm.test.tenantid.TenantIdTemporalMutationLegacyTest","--tests","org.hibernate.orm.test.jpa.lock.BatchAndLockTest","-Pdb=h2","formatChecks"]'
