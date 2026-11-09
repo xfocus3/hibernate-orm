@@ -4,8 +4,9 @@ on:
     branches: [sandcastle/hhh20417-publication-20261107]
     paths: [.github/workflows/hhh20417-publication.yml]
 permissions:
-  contents: read
+  contents: write
   actions: read
+  pull-requests: read
 concurrency:
   group: hhh-20417-publication-checkpoint
   cancel-in-progress: false
@@ -44,6 +45,12 @@ jobs:
           run-id: 42684728549
           github-token: ${{ github.token }}
           path: green
+      - name: Verify open PR and unchanged fork head
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = (await github.rest.pulls.get({owner: 'hibernate', repo: 'hibernate-orm', pull_number: 13881})).data;
+            if (pr.state !== 'open' || pr.merged || pr.user.login !== 'xfocus3' || pr.head.repo.full_name !== 'xfocus3/hibernate-orm' || pr.head.ref !== '8.0-HHH-20417-immediate-pessimistic-increment' || pr.head.sha !== 'b2b3cb99d1a72024a804d8d58de966f4a2c1cb7c') throw new Error('Official PR or source head changed');
       - name: Inspect XML counts, provenance, and formatter delta
         run: |
           python3 - <<'PY'
@@ -93,3 +100,25 @@ jobs:
           print('TESTED_DIFF_STAT ' + git('diff', '--cached', '--stat'))
           print('FORMATTER_DELTA ' + git('diff', candidate_tree, tested_tree))
           PY
+      - name: Publish the reviewed and validated follow-up
+        working-directory: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = b2b3cb99d1a72024a804d8d58de966f4a2c1cb7c
+          test "$(git write-tree)" = 1e64f66c8a294653c76ac6ac36334485c28328f3
+          git diff --cached --check
+          publication_ref=refs/heads/8.0-HHH-20417-immediate-pessimistic-increment
+          publication_base=$(git ls-remote --heads origin "$publication_ref" | cut -f1)
+          test "$publication_base" = b2b3cb99d1a72024a804d8d58de966f4a2c1cb7c
+          git config user.name xfocus3
+          git config user.email xfocus29@gmail.com
+          git commit -m "HHH-20417 Preserve persister overrides and guard locking regressions"
+          test "$(git show -s --format='%an <%ae>|%cn <%ce>')" = 'xfocus3 <xfocus29@gmail.com>|xfocus3 <xfocus29@gmail.com>'
+          test "$(git show -s --format=%T HEAD)" = 1e64f66c8a294653c76ac6ac36334485c28328f3
+          publication_auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          printf '::add-mask::%s\n' "$publication_auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $publication_auth" push origin "HEAD:$publication_ref"
+          test "$(git ls-remote --heads origin "$publication_ref" | cut -f1)" = "$(git rev-parse HEAD)"
+          printf 'PUBLISHED_HEAD=%s\n' "$(git rev-parse HEAD)"
