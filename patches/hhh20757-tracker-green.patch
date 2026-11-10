@@ -1,0 +1,274 @@
+diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/SeededVersionCustomDirtinessStrategyTest.java b/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/SeededVersionCustomDirtinessStrategyTest.java
+new file mode 100644
+--- /dev/null
++++ b/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/SeededVersionCustomDirtinessStrategyTest.java
+@@ -0,0 +1,129 @@
++/*
++ * SPDX-License-Identifier: Apache-2.0
++ * Copyright Red Hat Inc. and Hibernate Authors
++ */
++package org.hibernate.orm.test.bytecode.enhancement.dirty;
++
++import java.util.Objects;
++
++import jakarta.persistence.Entity;
++import jakarta.persistence.Id;
++import jakarta.persistence.Version;
++
++import org.hibernate.CustomEntityDirtinessStrategy;
++import org.hibernate.Session;
++import org.hibernate.cfg.AvailableSettings;
++import org.hibernate.engine.spi.SelfDirtinessTracker;
++import org.hibernate.persister.entity.EntityPersister;
++import org.hibernate.testing.bytecode.enhancement.extension.BytecodeEnhanced;
++import org.hibernate.testing.orm.junit.DomainModel;
++import org.hibernate.testing.orm.junit.JiraKey;
++import org.hibernate.testing.orm.junit.ServiceRegistry;
++import org.hibernate.testing.orm.junit.SessionFactory;
++import org.hibernate.testing.orm.junit.SessionFactoryScope;
++import org.hibernate.testing.orm.junit.SettingProvider;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertInstanceOf;
++
++@JiraKey("HHH-20757")
++@DomainModel(annotatedClasses = SeededVersionCustomDirtinessStrategyTest.Document.class)
++@ServiceRegistry(settingProviders = @SettingProvider(
++		settingName = AvailableSettings.CUSTOM_ENTITY_DIRTINESS_STRATEGY,
++		provider = SeededVersionCustomDirtinessStrategyTest.StrategyProvider.class
++))
++@SessionFactory(useCollectingStatementInspector = true)
++@BytecodeEnhanced
++public class SeededVersionCustomDirtinessStrategyTest {
++	@Test
++	void firstFlushAndSubsequentUpdate(SessionFactoryScope scope) {
++		scope.inTransaction( session -> {
++			final Document document = new Document();
++			document.id = 1L;
++			document.setName( "initial" );
++			assertInstanceOf( SelfDirtinessTracker.class, document );
++			final var statements = scope.getCollectingStatementInspector();
++			statements.clear();
++
++			// An assigned identifier keeps the INSERT queued until flush.
++			// Version seeding reinjects values and marks the enhanced version dirty.
++			session.persist( document );
++			session.flush();
++			assertEquals( 0L, document.version );
++			statements.assertExecutedCount( 1 );
++			statements.assertIsInsert( 0 );
++
++			statements.clear();
++			session.flush();
++			statements.assertExecutedCount( 0 );
++
++			document.setName( "changed" );
++			session.flush();
++			assertEquals( 1L, document.version );
++			statements.assertExecutedCount( 1 );
++			statements.assertIsUpdate( 0 );
++
++			statements.clear();
++		} );
++		scope.getCollectingStatementInspector().assertExecutedCount( 0 );
++		scope.inTransaction( session -> {
++			final Document reloaded = session.find( Document.class, 1L );
++			assertEquals( "changed", reloaded.name );
++			assertEquals( 1L, reloaded.version );
++		} );
++	}
++
++	@AfterEach
++	void cleanUp(SessionFactoryScope scope) {
++		scope.getSessionFactory().getSchemaManager().truncate();
++	}
++
++	public static class StrategyProvider implements SettingProvider.Provider<SnapshotStrategy> {
++		@Override
++		public SnapshotStrategy getSetting() {
++			return new SnapshotStrategy();
++		}
++	}
++
++	public static class SnapshotStrategy implements CustomEntityDirtinessStrategy {
++		@Override
++		public boolean canDirtyCheck(Object entity, EntityPersister persister, Session session) {
++			return entity instanceof Document;
++		}
++
++		@Override
++		public boolean isDirty(Object entity, EntityPersister persister, Session session) {
++			return true;
++		}
++
++		@Override
++		public void resetDirty(Object entity, EntityPersister persister, Session session) {
++		}
++
++		@Override
++		public void findDirty(
++				Object entity,
++				EntityPersister persister,
++				Session session,
++				DirtyCheckContext context) {
++			context.doDirtyChecking(
++					attribute -> !Objects.equals( attribute.getCurrentValue(), attribute.getLoadedValue() )
++			);
++		}
++	}
++
++	@Entity(name = "SeededVersionStrategyDocument")
++	public static class Document {
++		@Id
++		Long id;
++		@Version
++		Long version;
++		String name;
++
++		public void setName(String name) {
++			this.name = name;
++		}
++	}
++}
+diff --git a/hibernate-core/src/main/java/org/hibernate/event/internal/AbstractSaveEventListener.java b/hibernate-core/src/main/java/org/hibernate/event/internal/AbstractSaveEventListener.java
+--- a/hibernate-core/src/main/java/org/hibernate/event/internal/AbstractSaveEventListener.java
++++ b/hibernate-core/src/main/java/org/hibernate/event/internal/AbstractSaveEventListener.java
+@@ -352,9 +352,6 @@
+ 
+ 		if ( substitute ) {
+ 			persister.setValues( entity, values );
+-			// Injected insert values may dirty properties, and setters may also change other properties.
+-			// Use normal dirty checking to distinguish those changes.
+-			processIfManagedEntity( entity, managedEntity -> managedEntity.$$_hibernate_setUseTracker( false ) );
+ 		}
+ 
+ 		TypeHelper.deepCopy(
+diff --git a/hibernate-core/src/main/java/org/hibernate/persister/entity/AbstractEntityPersister.java b/hibernate-core/src/main/java/org/hibernate/persister/entity/AbstractEntityPersister.java
+--- a/hibernate-core/src/main/java/org/hibernate/persister/entity/AbstractEntityPersister.java
++++ b/hibernate-core/src/main/java/org/hibernate/persister/entity/AbstractEntityPersister.java
+@@ -2647,6 +2647,16 @@
+ 			}
+ 		}
+ 
++		// A seeded version may be reported dirty even though it is already in the snapshot.
++		final int versionIndex = getVersionPropertyIndex();
++		if ( isVersioned()
++				&& previousState != null
++				&& currentState[versionIndex] != LazyPropertyInitializer.UNFETCHED_PROPERTY
++				&& previousState[versionIndex] != LazyPropertyInitializer.UNFETCHED_PROPERTY
++				&& getVersionType().isEqual( previousState[versionIndex], currentState[versionIndex] ) ) {
++			fields.remove( Integer.valueOf( versionIndex ) );
++		}
++
+ 		return toIntArray( fields );
+ 	}
+ 
+diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/VersionedDirtyAttributeIndexesTest.java b/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/VersionedDirtyAttributeIndexesTest.java
+new file mode 100644
+--- /dev/null
++++ b/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/VersionedDirtyAttributeIndexesTest.java
+@@ -0,0 +1,102 @@
++/*
++ * SPDX-License-Identifier: Apache-2.0
++ * Copyright Red Hat Inc. and Hibernate Authors
++ */
++package org.hibernate.orm.test.bytecode.enhancement.dirty;
++
++import java.util.Arrays;
++
++import org.hibernate.bytecode.enhance.spi.LazyPropertyInitializer;
++import org.hibernate.testing.orm.junit.DomainModel;
++import org.hibernate.testing.orm.junit.JiraKey;
++import org.hibernate.testing.orm.junit.SessionFactory;
++import org.hibernate.testing.orm.junit.SessionFactoryScope;
++import org.junit.jupiter.api.Test;
++
++import jakarta.persistence.Entity;
++import jakarta.persistence.Id;
++import jakarta.persistence.Inheritance;
++import jakarta.persistence.Version;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++@JiraKey("HHH-20757")
++@DomainModel(annotatedClasses = {
++		VersionedDirtyAttributeIndexesTest.PlainEntity.class,
++		VersionedDirtyAttributeIndexesTest.RootEntity.class,
++		VersionedDirtyAttributeIndexesTest.ChildEntity.class
++})
++@SessionFactory
++class VersionedDirtyAttributeIndexesTest {
++	@Test
++	void versionAttributeWithSnapshot(SessionFactoryScope scope) {
++		verifyVersionAttribute( scope, PlainEntity.class );
++	}
++
++	@Test
++	void inheritedVersionAttributeWithSnapshot(SessionFactoryScope scope) {
++		verifyVersionAttribute( scope, ChildEntity.class );
++	}
++
++	private void verifyVersionAttribute(SessionFactoryScope scope, Class<?> entityClass) {
++		scope.inSession( session -> {
++			final var persister = scope.getSessionFactory().getMappingMetamodel().getEntityDescriptor( entityClass );
++			final int versionIndex = persister.getVersionPropertyIndex();
++			final int nameIndex = Arrays.asList( persister.getPropertyNames() ).indexOf( "name" );
++			assertThat( nameIndex ).isNotNegative();
++			final Object[] current = new Object[persister.getPropertyNames().length];
++			current[versionIndex] = 1L;
++			current[nameIndex] = "changed";
++			final Object[] previous = current.clone();
++
++			assertThat( persister.resolveDirtyAttributeIndexes(
++					current, previous, new String[] { "version" }, session
++			) ).isEmpty();
++			// Other reported dirty attributes must survive, even when their values compare equal.
++			assertThat( persister.resolveDirtyAttributeIndexes(
++					current, previous, new String[] { "version", "name" }, session
++			) ).containsExactly( nameIndex );
++
++			previous[versionIndex] = 0L;
++			assertThat( persister.resolveDirtyAttributeIndexes(
++					current, previous, new String[] { "version" }, session
++			) ).containsExactly( versionIndex );
++			assertThat( persister.resolveDirtyAttributeIndexes(
++					current, null, new String[] { "version" }, session
++			) ).containsExactly( versionIndex );
++
++			previous[versionIndex] = LazyPropertyInitializer.UNFETCHED_PROPERTY;
++			assertThat( persister.resolveDirtyAttributeIndexes(
++					current, previous, new String[] { "version" }, session
++			) ).containsExactly( versionIndex );
++			current[versionIndex] = LazyPropertyInitializer.UNFETCHED_PROPERTY;
++			assertThat( persister.resolveDirtyAttributeIndexes(
++					current, previous, new String[] { "version" }, session
++			) ).containsExactly( versionIndex );
++		} );
++	}
++
++	@Entity(name = "PlainDirtyVersionEntity")
++	public static class PlainEntity {
++		@Id
++		Long id;
++		@Version
++		Long version;
++		String name;
++	}
++
++	@Entity(name = "RootDirtyVersionEntity")
++	@Inheritance
++	public static class RootEntity {
++		@Id
++		Long id;
++		@Version
++		Long version;
++		String name;
++	}
++
++	@Entity(name = "ChildDirtyVersionEntity")
++	public static class ChildEntity extends RootEntity {
++		String code;
++	}
++}
