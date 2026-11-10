@@ -1,0 +1,114 @@
+diff --git a/hibernate-core/src/main/java/org/hibernate/sql/results/internal/RowTransformerListImpl.java b/hibernate-core/src/main/java/org/hibernate/sql/results/internal/RowTransformerListImpl.java
+--- a/hibernate-core/src/main/java/org/hibernate/sql/results/internal/RowTransformerListImpl.java
++++ b/hibernate-core/src/main/java/org/hibernate/sql/results/internal/RowTransformerListImpl.java
+@@ -7,3 +7,2 @@
+ import static java.util.Arrays.asList;
+-import static java.util.Collections.unmodifiableList;
+ 
+@@ -28,3 +27,3 @@
+ 	public List<Object> transformRow(Object[] row) {
+-		return unmodifiableList( asList( row ) );
++		return asList( row );
+ 	}
+diff --git a/hibernate-core/src/main/java/org/hibernate/jpa/spi/NativeQueryListTransformer.java b/hibernate-core/src/main/java/org/hibernate/jpa/spi/NativeQueryListTransformer.java
+--- a/hibernate-core/src/main/java/org/hibernate/jpa/spi/NativeQueryListTransformer.java
++++ b/hibernate-core/src/main/java/org/hibernate/jpa/spi/NativeQueryListTransformer.java
+@@ -9,3 +9,2 @@
+ import static java.util.Arrays.asList;
+-import static java.util.Collections.unmodifiableList;
+ 
+@@ -25,3 +24,3 @@
+ 	public List<Object> transformTuple(@Nonnull Object[] tuple, @Nonnull String[] aliases) {
+-		return unmodifiableList( asList( tuple ) );
++		return asList( tuple );
+ 	}
+diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/query/hql/ListResultTransformerTest.java b/hibernate-core/src/test/java/org/hibernate/orm/test/query/hql/ListResultTransformerTest.java
+--- a/hibernate-core/src/test/java/org/hibernate/orm/test/query/hql/ListResultTransformerTest.java
++++ b/hibernate-core/src/test/java/org/hibernate/orm/test/query/hql/ListResultTransformerTest.java
+@@ -1,41 +1,45 @@
+-package org.hibernate.orm.test.query.hql;
+-
+-import java.util.List;
+-
+-import org.hibernate.jpa.spi.NativeQueryListTransformer;
+-import org.hibernate.sql.results.internal.RowTransformerListImpl;
+-import org.hibernate.testing.orm.junit.JiraKey;
+-
+-import org.junit.jupiter.api.Test;
+-
+-import static org.junit.jupiter.api.Assertions.assertEquals;
+-import static org.junit.jupiter.api.Assertions.assertNull;
+-import static org.junit.jupiter.api.Assertions.assertThrows;
+-
+-@JiraKey( "HHH-20328" )
+-public class ListResultTransformerTest {
+-	@Test
+-	public void testHqlListIsUnmodifiable() {
+-		Object[] row = { 1L, null };
+-		List<Object> result = RowTransformerListImpl.instance().transformRow( row );
+-		assertEquals( 2, result.size() );
+-		assertEquals( 1L, result.get( 0 ) );
+-		assertNull( result.get( 1 ) );
+-		assertThrows( UnsupportedOperationException.class, () -> result.set( 0, 3L ) );
+-		assertThrows( UnsupportedOperationException.class, () -> result.add( 3L ) );
+-		assertThrows( UnsupportedOperationException.class, () -> result.remove( 0 ) );
+-	}
+-
+-	@Test
+-	public void testNativeListIsUnmodifiable() {
+-		Object[] tuple = { 1L, null };
+-		List<Object> result = NativeQueryListTransformer.INSTANCE.transformTuple(
+-				tuple, new String[] { "id", "name" } );
+-		assertEquals( 2, result.size() );
+-		assertEquals( 1L, result.get( 0 ) );
+-		assertNull( result.get( 1 ) );
+-		assertThrows( UnsupportedOperationException.class, () -> result.set( 0, 3L ) );
+-		assertThrows( UnsupportedOperationException.class, () -> result.add( 3L ) );
+-		assertThrows( UnsupportedOperationException.class, () -> result.remove( 0 ) );
+-	}
+-}
++package org.hibernate.orm.test.query.hql;
++
++import java.util.List;
++
++import org.hibernate.jpa.spi.NativeQueryListTransformer;
++import org.hibernate.sql.results.internal.RowTransformerListImpl;
++import org.hibernate.testing.orm.junit.JiraKey;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++@JiraKey( "HHH-20328" )
++public class ListResultTransformerTest {
++	@Test
++	public void testHqlListAllowsNullsAndReplacement() {
++		Object[] row = { 1L, null };
++		List<Object> result = RowTransformerListImpl.instance().transformRow( row );
++		assertEquals( 2, result.size() );
++		assertEquals( 1L, result.get( 0 ) );
++		assertNull( result.get( 1 ) );
++		assertEquals( 1L, result.set( 0, 3L ) );
++		assertNull( result.set( 1, "updated" ) );
++		assertEquals( List.of( 3L, "updated" ), result );
++		assertThrows( UnsupportedOperationException.class, () -> result.add( 3L ) );
++		assertThrows( UnsupportedOperationException.class, () -> result.remove( 0 ) );
++	}
++
++	@Test
++	public void testNativeListAllowsNullsAndReplacement() {
++		Object[] tuple = { 1L, null };
++		List<Object> result = NativeQueryListTransformer.INSTANCE.transformTuple(
++				tuple, new String[] { "id", "name" } );
++		assertEquals( 2, result.size() );
++		assertEquals( 1L, result.get( 0 ) );
++		assertNull( result.get( 1 ) );
++		assertEquals( 1L, result.set( 0, 3L ) );
++		assertNull( result.set( 1, "updated" ) );
++		assertEquals( List.of( 3L, "updated" ), result );
++		assertThrows( UnsupportedOperationException.class, () -> result.add( 3L ) );
++		assertThrows( UnsupportedOperationException.class, () -> result.remove( 0 ) );
++	}
++}
