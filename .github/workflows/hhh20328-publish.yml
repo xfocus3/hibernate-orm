@@ -94,7 +94,10 @@ jobs:
               provenance = dict(line.split("=", 1) for line in (root / "verification.txt").read_text().splitlines())
               assert provenance["base"] == base and provenance["patch_commit"] == patch_commit
               assert provenance["tree"] == tree and provenance["tested_tree"] == tree
-              assert (root / "verified.patch").read_bytes() == git("diff", "--cached", "--binary", base)
+              git("read-tree", base)
+              git("apply", "--cached", "../" + folder + "/verified.patch")
+              assert text("write-tree") == tree, "Saved patch does not reconstruct tested tree"
+              git("read-tree", tree)
               files = list(root.rglob("TEST-*.xml"))
               assert files, "Missing XML test reports"
               totals = dict.fromkeys(("tests", "failures", "errors", "skipped"), 0)
