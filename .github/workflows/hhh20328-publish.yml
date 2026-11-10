@@ -1,0 +1,156 @@
+name: HHH-20328 audit and publish tested replacement fix
+on:
+  push:
+    branches: [sandcastle/hhh20448-review-20261109]
+    paths: [.github/workflows/hhh20328-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: hhh20328-reviewed-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPECTED_HEAD: 684b74e44a1047162ba796d6a8ced4331cf3521e
+      PATCH_COMMIT: 9e17dfc29e70f2389b8439e4d3e2a0dbdc191728
+      PR_BRANCH: HHH-20328
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 684b74e44a1047162ba796d6a8ced4331cf3521e
+          path: source
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: 9e17dfc29e70f2389b8439e4d3e2a0dbdc191728
+          path: request
+          persist-credentials: false
+      - name: Verify RED and GREEN run identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess
+          def api(path):
+              return json.loads(subprocess.check_output(["gh", "api", "repos/xfocus3/hibernate-orm/" + path], text=True))
+          checks = [
+              (42808234748, "a8c39fcfc55f29d61ae1b2905909b025d3d271a5", "hhh20328-review.yml", "failure", 13762370779, "sha256:df46e2862eb4fbfad596eb80a296eb778bd83e59ae0d81a563dcef7c714b8a7c"),
+              (42809699251, "ea680959b25d2c52d07c5bc3aa944e0d836f3995", "hhh20328-green.yml", "success", 13761843297, "sha256:6ae882a3c05e998ad0c96592dca7623dfc07c3169395219abba9c9ed8973c4fe"),
+          ]
+          for run_id, sha, workflow, conclusion, artifact_id, digest in checks:
+              run = api(f"actions/runs/{run_id}")
+              assert run["id"] == run_id and run["head_sha"] == sha
+              assert run["head_branch"] == "sandcastle/hhh20448-review-20261109"
+              assert run["event"] == "push" and run["status"] == "completed"
+              assert run["conclusion"] == conclusion and run["path"] == ".github/workflows/" + workflow
+              artifact = api(f"actions/artifacts/{artifact_id}")
+              assert artifact["id"] == artifact_id and not artifact["expired"]
+              assert artifact["name"] == f"java-verification-{run_id}"
+              assert artifact["workflow_run"]["id"] == run_id and artifact["digest"] == digest
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-verification-42808234748
+          repository: xfocus3/hibernate-orm
+          run-id: 42808234748
+          github-token: ${{ github.token }}
+          path: red-reports
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-verification-42809699251
+          repository: xfocus3/hibernate-orm
+          run-id: 42809699251
+          github-token: ${{ github.token }}
+          path: green-reports
+      - name: Audit exact tested source and regression XML
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git -C request rev-parse HEAD)" = "$PATCH_COMMIT"
+          git -C source apply --check ../request/patches/hhh20328-list-replacement-green.patch
+          git -C source apply --index ../request/patches/hhh20328-list-replacement-green.patch
+          python3 - <<'PY'
+          import os, pathlib, subprocess, xml.etree.ElementTree as ET
+          def git(*args):
+              return subprocess.check_output(["git", "-C", "source", *args])
+          def text(*args):
+              return git(*args).decode().strip()
+          base = os.environ["EXPECTED_HEAD"]
+          allowed = {
+              "hibernate-core/src/main/java/org/hibernate/jpa/spi/NativeQueryListTransformer.java",
+              "hibernate-core/src/main/java/org/hibernate/sql/results/internal/RowTransformerListImpl.java",
+              "hibernate-core/src/test/java/org/hibernate/orm/test/query/hql/ListResultTransformerTest.java",
+          }
+          assert set(text("diff", "--cached", "--name-only", base).splitlines()) == allowed
+          git("diff", "--check", "--cached")
+          green_tree = text("write-tree")
+          required = {"testHqlListAllowsNullsAndReplacement", "testNativeListAllowsNullsAndReplacement"}
+          def audit_reports(folder, patch_commit, tree, red):
+              root = pathlib.Path(folder)
+              provenance = dict(line.split("=", 1) for line in (root / "verification.txt").read_text().splitlines())
+              assert provenance["base"] == base and provenance["patch_commit"] == patch_commit
+              assert provenance["tree"] == tree and provenance["tested_tree"] == tree
+              assert (root / "verified.patch").read_bytes() == git("diff", "--cached", "--binary", base)
+              files = list(root.rglob("TEST-*.xml"))
+              assert files, "Missing XML test reports"
+              totals = dict.fromkeys(("tests", "failures", "errors", "skipped"), 0)
+              regressions = set()
+              for file in files:
+                  suite = ET.parse(file).getroot()
+                  assert suite.tag == "testsuite"
+                  counts = {key: int(suite.get(key, "0")) for key in totals}
+                  for key, value in counts.items():
+                      totals[key] += value
+                  assert counts["errors"] == 0 and counts["skipped"] == 0
+                  if not red:
+                      assert counts["failures"] == 0
+                  if suite.get("name") == "org.hibernate.orm.test.query.hql.ListResultTransformerTest":
+                      for case in suite.findall("testcase"):
+                          name = case.get("name", "").removesuffix("()")
+                          regressions.add(name)
+                          failures = case.findall("failure")
+                          if red:
+                              assert len(failures) == 1
+                              assert "UnsupportedOperationException" in failures[0].get("type", "")
+                          else:
+                              assert not failures
+              assert regressions == required
+              if red:
+                  assert totals == {"tests": 2, "failures": 2, "errors": 0, "skipped": 0}
+              else:
+                  assert totals["tests"] >= 40
+              return totals
+          green = audit_reports("green-reports", os.environ["PATCH_COMMIT"], green_tree, False)
+          git("read-tree", base)
+          git("apply", "--cached", "../request/patches/hhh20328-unwrapped-list-red.patch")
+          red_tree = text("write-tree")
+          red = audit_reports("red-reports", "8bbfd16fd1b49f12f715a5a816f87be15294427a", red_tree, True)
+          git("read-tree", green_tree)
+          git("diff", "--exit-code")
+          pathlib.Path("audited-tree.txt").write_text(green_tree + "\n")
+          summary = f"RED: {red['tests']} tests, both failed with UnsupportedOperationException before the fix.\nGREEN: {green['tests']} tests, 0 failures, 0 errors, 0 skipped.\nAudited GREEN tree: {green_tree}. Source was unchanged by tests and formatting.\n"
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
+          PY
+      - name: Publish only to the unchanged PR branch
+        working-directory: source
+        run: |
+          set -euo pipefail
+          current="$(git ls-remote --exit-code origin "refs/heads/$PR_BRANCH" | cut -f1)"
+          test "$current" = "$EXPECTED_HEAD"
+          git config user.name "$(git show -s --format=%an "$EXPECTED_HEAD")"
+          git config user.email "$(git show -s --format=%ae "$EXPECTED_HEAD")"
+          git commit -m "HHH-20328 Allow replacement in null-tolerant List results"
+          candidate="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$(cat ../audited-tree.txt)"
+          git diff --exit-code HEAD -- .
+          git push --force-with-lease="refs/heads/$PR_BRANCH:$EXPECTED_HEAD" origin "$candidate:refs/heads/$PR_BRANCH"
+          published="$(git ls-remote --exit-code origin "refs/heads/$PR_BRANCH" | cut -f1)"
+          test "$published" = "$candidate"
+          printf 'Published exact audited commit %s to %s.\n' "$published" "$PR_BRANCH" >> "$GITHUB_STEP_SUMMARY"
