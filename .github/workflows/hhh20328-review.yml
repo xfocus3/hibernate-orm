@@ -1,0 +1,17 @@
+name: HHH-20328 verify replacement regression
+on:
+  push:
+    branches: [sandcastle/hhh20448-review-20261109]
+    paths: [.github/workflows/hhh20328-review.yml]
+permissions:
+  contents: read
+jobs:
+  red:
+    uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
+    with:
+      target_sha: 684b74e44a1047162ba796d6a8ced4331cf3521e
+      patch_ref: 8bbfd16fd1b49f12f715a5a816f87be15294427a
+      patch_path: patches/hhh20328-unwrapped-list-red.patch
+      java_version: '25'
+      build_tool: gradle
+      arguments: '["hibernate-core:test","--rerun","--tests","org.hibernate.orm.test.query.hql.ListResultTransformerTest","-Pdb=h2"]'
