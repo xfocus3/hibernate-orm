@@ -1,0 +1,17 @@
+name: HHH-20328 verify list replacement fix
+on:
+  push:
+    branches: [sandcastle/hhh20448-review-20261109]
+    paths: [.github/workflows/hhh20328-green.yml]
+permissions:
+  contents: read
+jobs:
+  green:
+    uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
+    with:
+      target_sha: 684b74e44a1047162ba796d6a8ced4331cf3521e
+      patch_ref: 9e17dfc29e70f2389b8439e4d3e2a0dbdc191728
+      patch_path: patches/hhh20328-list-replacement-green.patch
+      java_version: '25'
+      build_tool: gradle
+      arguments: '["hibernate-core:test","--rerun","--tests","org.hibernate.orm.test.query.hql.ImplicitInstantiationTest*","--tests","org.hibernate.orm.test.query.hql.ListResultTransformerTest","--tests","org.hibernate.orm.test.query.hql.DynamicInstantiationTests","--tests","org.hibernate.orm.test.query.hql.DynamicMapInstantiationTest","-Pdb=h2","formatChecks"]'
