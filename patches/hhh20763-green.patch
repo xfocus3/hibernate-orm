@@ -1,0 +1,424 @@
+diff --git a/hibernate-core/src/main/java/org/hibernate/boot/model/internal/BinderHelper.java b/hibernate-core/src/main/java/org/hibernate/boot/model/internal/BinderHelper.java
+--- a/hibernate-core/src/main/java/org/hibernate/boot/model/internal/BinderHelper.java
++++ b/hibernate-core/src/main/java/org/hibernate/boot/model/internal/BinderHelper.java
+@@ -996,7 +996,24 @@
+ 	}
+ 
+ 	static ForeignKey resolveContainerForeignKey(ForeignKey containerFk, PrimaryKeyJoinColumn[] columns) {
+-		return resolveContainerForeignKey( containerFk, columns.length != 0 ? columns[0].foreignKey() : null );
++		if ( isSpecified( containerFk ) ) {
++			return containerFk;
++		}
++		for ( var column : columns ) {
++			final var columnFk = column.foreignKey();
++			if ( isSpecified( columnFk ) ) {
++				return columnFk;
++			}
++		}
++		return containerFk;
++	}
++
++	private static boolean isSpecified(ForeignKey foreignKey) {
++		return foreignKey != null
++				&& ( foreignKey.value() == NO_CONSTRAINT
++						|| !isEmpty( foreignKey.name() )
++						|| !isEmpty( foreignKey.foreignKeyDefinition() )
++						|| !isEmpty( foreignKey.options() ) );
+ 	}
+ 
+ 	static ForeignKey resolveContainerForeignKey(ForeignKey containerFk, ForeignKey... columnFks) {
+diff --git a/hibernate-core/src/main/java/org/hibernate/boot/model/internal/EntityBinder.java b/hibernate-core/src/main/java/org/hibernate/boot/model/internal/EntityBinder.java
+--- a/hibernate-core/src/main/java/org/hibernate/boot/model/internal/EntityBinder.java
++++ b/hibernate-core/src/main/java/org/hibernate/boot/model/internal/EntityBinder.java
+@@ -974,12 +974,12 @@
+ 
+ 	private static void handleForeignKey(ClassDetails clazzToProcess, MetadataBuildingContext context, DependantValue key) {
+ 		final var foreignKey = clazzToProcess.getDirectAnnotationUsage( ForeignKey.class );
+-		handleForeignKeyConstraint( key, foreignKey, nestedForeignKey( clazzToProcess ), context );
+-	}
+-
+-	private static ForeignKey nestedForeignKey(ClassDetails clazzToProcess) {
+-		final var pkJoinColumn = clazzToProcess.getDirectAnnotationUsage( PrimaryKeyJoinColumn.class );
+-		final var pkJoinColumns = clazzToProcess.getDirectAnnotationUsage( PrimaryKeyJoinColumns.class );
++		handleForeignKeyConstraint( key, foreignKey, primaryKeyJoinColumnForeignKey( clazzToProcess ), context );
++	}
++
++	static ForeignKey primaryKeyJoinColumnForeignKey(AnnotationTarget annotationTarget) {
++		final var pkJoinColumn = annotationTarget.getDirectAnnotationUsage( PrimaryKeyJoinColumn.class );
++		final var pkJoinColumns = annotationTarget.getDirectAnnotationUsage( PrimaryKeyJoinColumns.class );
+ 		if ( pkJoinColumn != null ) {
+ 			return pkJoinColumn.foreignKey();
+ 		}
+diff --git a/hibernate-core/src/main/java/org/hibernate/boot/model/internal/ToOneBinder.java b/hibernate-core/src/main/java/org/hibernate/boot/model/internal/ToOneBinder.java
+--- a/hibernate-core/src/main/java/org/hibernate/boot/model/internal/ToOneBinder.java
++++ b/hibernate-core/src/main/java/org/hibernate/boot/model/internal/ToOneBinder.java
+@@ -51,6 +51,7 @@
+ import static org.hibernate.boot.model.internal.BinderHelper.resolveContainerForeignKey;
+ import static org.hibernate.boot.BootLogging.BOOT_LOGGER;
+ import static org.hibernate.boot.model.internal.EntityBinder.isEntity;
++import static org.hibernate.boot.model.internal.EntityBinder.primaryKeyJoinColumnForeignKey;
+ import static org.hibernate.boot.model.internal.PropertyBinder.isNonnull;
+ import static org.hibernate.internal.util.StringHelper.isBlank;
+ import static org.hibernate.internal.util.StringHelper.nullIfEmpty;
+@@ -625,8 +626,16 @@
+ 		oneToOne.setForeignKeyType( formulaBased
+ 				? ( constrained ? FROM_PARENT : TO_PARENT )
+ 				: ( mappedBy == null ? FROM_PARENT : TO_PARENT ) );
++		final var overriddenForeignKey = propertyHolder.getOverriddenForeignKey(
++				qualify( propertyHolder.getPath(), propertyName ) );
++		final var joinColumnForeignKey = nestedForeignKey( memberDetails );
+ 		bindForeignKeyNameAndDefinition( oneToOne, memberDetails,
+-				memberDetails.getDirectAnnotationUsage( ForeignKey.class ),
++				overriddenForeignKey != null
++						? overriddenForeignKey
++						: memberDetails.getDirectAnnotationUsage( ForeignKey.class ),
++				overriddenForeignKey != null ? null
++						: joinColumnForeignKey != null ? joinColumnForeignKey
++						: mappedBy == null ? primaryKeyJoinColumnForeignKey( memberDetails ) : null,
+ 				context );
+ 
+ 		final var binder = new PropertyBinder();
+@@ -761,31 +770,32 @@
+ 			MemberDetails memberDetails,
+ 			ForeignKey foreignKey,
+ 			MetadataBuildingContext context) {
++		bindForeignKeyNameAndDefinition( value, memberDetails, foreignKey, nestedForeignKey( memberDetails ), context );
++	}
++
++	private static void bindForeignKeyNameAndDefinition(
++			SimpleValue value,
++			MemberDetails memberDetails,
++			ForeignKey foreignKey,
++			ForeignKey nestedForeignKey,
++			MetadataBuildingContext context) {
+ 		if ( memberDetails.hasDirectAnnotationUsage( NotFound.class ) ) {
+ 			// supersedes all others
+ 			value.disableForeignKey();
+ 		}
+ 		else {
+-			handleForeignKeyConstraint( value, foreignKey, nestedForeignKey( memberDetails ), context );
++			handleForeignKeyConstraint( value, foreignKey, nestedForeignKey, context );
+ 		}
+ 	}
+ 
+ 	private static ForeignKey nestedForeignKey(MemberDetails memberDetails) {
+ 		final var joinColumn = memberDetails.getDirectAnnotationUsage( JoinColumn.class );
+ 		final var joinColumns = memberDetails.getDirectAnnotationUsage( JoinColumns.class );
+-		final var primaryKeyJoinColumn = memberDetails.getDirectAnnotationUsage( PrimaryKeyJoinColumn.class );
+-		final var primaryKeyJoinColumns = memberDetails.getDirectAnnotationUsage( PrimaryKeyJoinColumns.class );
+ 		if ( joinColumn != null ) {
+ 			return joinColumn.foreignKey();
+ 		}
+ 		else if ( joinColumns != null ) {
+ 			return resolveContainerForeignKey( joinColumns.foreignKey(), joinColumns.value() );
+-		}
+-		else if ( primaryKeyJoinColumn != null ) {
+-			return primaryKeyJoinColumn.foreignKey();
+-		}
+-		else if ( primaryKeyJoinColumns != null ) {
+-			return resolveContainerForeignKey( primaryKeyJoinColumns.foreignKey(), primaryKeyJoinColumns.value() );
+ 		}
+ 		else {
+ 			return null;
+diff --git a/hibernate-core/src/test/java/org/hibernate/boot/model/internal/PrimaryKeyJoinColumnForeignKeyResolverTest.java b/hibernate-core/src/test/java/org/hibernate/boot/model/internal/PrimaryKeyJoinColumnForeignKeyResolverTest.java
+new file mode 100644
+--- /dev/null
++++ b/hibernate-core/src/test/java/org/hibernate/boot/model/internal/PrimaryKeyJoinColumnForeignKeyResolverTest.java
+@@ -0,0 +1,87 @@
++package org.hibernate.boot.model.internal;
++
++import java.util.Map;
++
++import org.hibernate.boot.models.annotations.internal.ForeignKeyJpaAnnotation;
++import org.hibernate.boot.models.annotations.internal.PrimaryKeyJoinColumnJpaAnnotation;
++
++import org.junit.jupiter.api.Test;
++
++import jakarta.persistence.ForeignKey;
++import jakarta.persistence.PrimaryKeyJoinColumn;
++
++import static jakarta.persistence.ConstraintMode.CONSTRAINT;
++import static jakarta.persistence.ConstraintMode.NO_CONSTRAINT;
++import static org.assertj.core.api.Assertions.assertThat;
++
++class PrimaryKeyJoinColumnForeignKeyResolverTest {
++	@Test
++	void synthesizedContainerDefaultDoesNotHideNestedName() {
++		final var container = new ForeignKeyJpaAnnotation( null );
++		final var nested = new ForeignKeyJpaAnnotation( null );
++		nested.name( "FK_NESTED" );
++
++		assertThat( container.value() ).isEqualTo( CONSTRAINT );
++		assertThat( resolve( container, nested ) ).isSameAs( nested );
++	}
++
++	@Test
++	void scansPastSynthesizedColumnDefault() {
++		final var nested = new ForeignKeyJpaAnnotation( null );
++		nested.name( "FK_SECOND_COLUMN" );
++
++		assertThat( resolve( new ForeignKeyJpaAnnotation( null ), new ForeignKeyJpaAnnotation( null ), nested ) )
++				.isSameAs( nested );
++	}
++
++	@Test
++	void findsUnnamedDefinitionAndOptions() {
++		final var definition = new ForeignKeyJpaAnnotation( null );
++		definition.foreignKeyDefinition( "foreign key (id) references target" );
++		final var options = new ForeignKeyJpaAnnotation( null );
++		options.options( "on delete cascade" );
++
++		assertThat( resolve( new ForeignKeyJpaAnnotation( null ), new ForeignKeyJpaAnnotation( null ), definition ) )
++				.isSameAs( definition );
++		assertThat( resolve( new ForeignKeyJpaAnnotation( null ), new ForeignKeyJpaAnnotation( null ), options ) )
++				.isSameAs( options );
++	}
++
++	@Test
++	void findsNestedNoConstraint() {
++		final var nested = new ForeignKeyJpaAnnotation( null );
++		nested.value( NO_CONSTRAINT );
++
++		assertThat( resolve( new ForeignKeyJpaAnnotation( null ), new ForeignKeyJpaAnnotation( null ), nested ) )
++				.isSameAs( nested );
++	}
++
++	@Test
++	void explicitContainerNameTakesPrecedence() {
++		final var container = new ForeignKeyJpaAnnotation( null );
++		container.name( "FK_CONTAINER" );
++		final var nested = new ForeignKeyJpaAnnotation( null );
++		nested.name( "FK_NESTED" );
++
++		assertThat( resolve( container, nested ) ).isSameAs( container );
++	}
++
++	@Test
++	void containerNoConstraintTakesPrecedenceOverNestedName() {
++		final var container = new ForeignKeyJpaAnnotation( null );
++		container.value( NO_CONSTRAINT );
++		final var nested = new ForeignKeyJpaAnnotation( null );
++		nested.name( "FK_NESTED" );
++
++		assertThat( resolve( container, nested ) ).isSameAs( container );
++	}
++
++	private static ForeignKey resolve(ForeignKey container, ForeignKey... foreignKeys) {
++		final var columns = new PrimaryKeyJoinColumn[foreignKeys.length];
++		for ( int i = 0; i < foreignKeys.length; i++ ) {
++			// The map constructor needs no ModelsContext for this FK-only resolver test.
++			columns[i] = new PrimaryKeyJoinColumnJpaAnnotation( Map.of( "foreignKey", foreignKeys[i] ), null );
++		}
++		return BinderHelper.resolveContainerForeignKey( container, columns );
++	}
++}
+diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/PrimaryKeyJoinColumnForeignKeyTest.java b/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/PrimaryKeyJoinColumnForeignKeyTest.java
+--- a/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/PrimaryKeyJoinColumnForeignKeyTest.java
++++ b/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/PrimaryKeyJoinColumnForeignKeyTest.java
+@@ -11,9 +11,15 @@
+ import org.junit.jupiter.api.BeforeAll;
+ import org.junit.jupiter.api.Test;
+ 
++import jakarta.persistence.AssociationOverride;
++import jakarta.persistence.Column;
++import jakarta.persistence.Embeddable;
++import jakarta.persistence.EmbeddedId;
+ import jakarta.persistence.Entity;
+ import jakarta.persistence.Id;
+ import jakarta.persistence.JoinColumn;
++import jakarta.persistence.ManyToOne;
++import jakarta.persistence.MappedSuperclass;
+ import jakarta.persistence.OneToOne;
+ import jakarta.persistence.PrimaryKeyJoinColumn;
+ import jakarta.persistence.PrimaryKeyJoinColumns;
+@@ -34,7 +40,16 @@
+ 		PrimaryKeyJoinColumnForeignKeyTest.ContainerNamedConstraint.class,
+ 		PrimaryKeyJoinColumnForeignKeyTest.NestedNamedConstraint.class,
+ 		PrimaryKeyJoinColumnForeignKeyTest.JoinColumnNamedConstraint.class,
+-		PrimaryKeyJoinColumnForeignKeyTest.JoinColumnNoConstraint.class
++		PrimaryKeyJoinColumnForeignKeyTest.JoinColumnNoConstraint.class,
++		PrimaryKeyJoinColumnForeignKeyTest.OverriddenConstraint.class,
++		PrimaryKeyJoinColumnForeignKeyTest.OverriddenDefaultConstraint.class,
++		PrimaryKeyJoinColumnForeignKeyTest.NestedNoConstraint.class,
++		PrimaryKeyJoinColumnForeignKeyTest.CompositeTarget.class,
++		PrimaryKeyJoinColumnForeignKeyTest.SecondColumnNamedConstraint.class,
++		PrimaryKeyJoinColumnForeignKeyTest.SecondColumnNoConstraint.class,
++		PrimaryKeyJoinColumnForeignKeyTest.SecondColumnDefinition.class,
++		PrimaryKeyJoinColumnForeignKeyTest.SecondColumnOptions.class,
++		PrimaryKeyJoinColumnForeignKeyTest.ManyToOneWithPrimaryKeyJoinColumn.class
+ })
+ @SessionFactory
+ class PrimaryKeyJoinColumnForeignKeyTest {
+@@ -87,6 +102,50 @@
+ 		assertThat( foreignKeys( scope, JoinColumnNoConstraint.class ) ).isEmpty();
+ 	}
+ 
++	@Test
++	void testAssociationOverrideConstraint(SessionFactoryScope scope) {
++		assertThat( foreignKeys( scope, OverriddenConstraint.class ) ).hasSize( 1 );
++	}
++
++	@Test
++	void testAssociationOverrideDefaultConstraint(SessionFactoryScope scope) {
++		assertThat( foreignKeys( scope, OverriddenDefaultConstraint.class ) ).hasSize( 1 );
++	}
++
++	@Test
++	void testNestedNoConstraint(SessionFactoryScope scope) {
++		assertThat( foreignKeys( scope, NestedNoConstraint.class ) ).isEmpty();
++	}
++
++	@Test
++	void testSecondColumnNamedConstraint(SessionFactoryScope scope) {
++		assertThat( foreignKeys( scope, SecondColumnNamedConstraint.class ) )
++				.extracting( ForeignKey::getName ).containsExactly( "FK_PK_SECOND_COLUMN" );
++	}
++
++	@Test
++	void testSecondColumnNoConstraint(SessionFactoryScope scope) {
++		assertThat( foreignKeys( scope, SecondColumnNoConstraint.class ) ).isEmpty();
++	}
++
++	@Test
++	void testSecondColumnDefinition(SessionFactoryScope scope) {
++		assertThat( foreignKeys( scope, SecondColumnDefinition.class ) )
++				.extracting( ForeignKey::getKeyDefinition )
++				.containsExactly( "foreign key (first_id, second_id) references pk_fk_composite_target" );
++	}
++
++	@Test
++	void testSecondColumnOptions(SessionFactoryScope scope) {
++		assertThat( foreignKeys( scope, SecondColumnOptions.class ) )
++				.extracting( ForeignKey::getOptions ).containsExactly( "on delete cascade" );
++	}
++
++	@Test
++	void testManyToOneIgnoresPrimaryKeyJoinColumn(SessionFactoryScope scope) {
++		assertThat( foreignKeys( scope, ManyToOneWithPrimaryKeyJoinColumn.class ) ).hasSize( 1 );
++	}
++
+ 	private Collection<ForeignKey> foreignKeys(SessionFactoryScope scope, Class<?> entityClass) {
+ 		return scope.getMetadataImplementor().getEntityBinding( entityClass.getName() )
+ 				.getTable().getForeignKeyCollection();
+@@ -192,4 +251,121 @@
+ 		@JoinColumn(name = "target_id", foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT))
+ 		Target target;
+ 	}
++
++	@MappedSuperclass
++	static class InheritedAssociation {
++		@Id
++		Integer id;
++
++		@OneToOne(fetch = LAZY, optional = false)
++		@PrimaryKeyJoinColumn(foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT))
++		Target target;
++	}
++
++	@Entity(name = "OverriddenPrimaryKeyConstraint")
++	@Table(name = "pk_fk_override")
++	@AssociationOverride(name = "target", joinColumns = @JoinColumn(name = "id"),
++			foreignKey = @jakarta.persistence.ForeignKey(CONSTRAINT))
++	static class OverriddenConstraint extends InheritedAssociation {
++	}
++
++	@Entity(name = "OverriddenPrimaryKeyDefaultConstraint")
++	@Table(name = "pk_fk_override_default")
++	@AssociationOverride(name = "target", joinColumns = @JoinColumn(name = "id"))
++	static class OverriddenDefaultConstraint extends InheritedAssociation {
++	}
++
++	@Entity(name = "PrimaryKeyNestedNoConstraint")
++	@Table(name = "pk_fk_nested_none")
++	static class NestedNoConstraint {
++		@Id
++		Integer id;
++
++		@OneToOne(fetch = LAZY, optional = false)
++		@PrimaryKeyJoinColumns(@PrimaryKeyJoinColumn(
++				foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT)))
++		Target target;
++	}
++
++	@Embeddable
++	record CompositeId(@Column(name = "first_id") Integer first, @Column(name = "second_id") Integer second) {
++	}
++
++	@Entity(name = "CompositePrimaryKeyForeignKeyTarget")
++	@Table(name = "pk_fk_composite_target")
++	static class CompositeTarget {
++		@EmbeddedId
++		CompositeId id;
++	}
++
++	@Entity(name = "PrimaryKeySecondColumnNamedConstraint")
++	@Table(name = "pk_fk_second_named")
++	static class SecondColumnNamedConstraint {
++		@EmbeddedId
++		CompositeId id;
++
++		@OneToOne(fetch = LAZY, optional = false)
++		@PrimaryKeyJoinColumns({
++				@PrimaryKeyJoinColumn(name = "first_id", referencedColumnName = "first_id"),
++				@PrimaryKeyJoinColumn(name = "second_id", referencedColumnName = "second_id",
++						foreignKey = @jakarta.persistence.ForeignKey(name = "FK_PK_SECOND_COLUMN"))
++		})
++		CompositeTarget target;
++	}
++
++	@Entity(name = "PrimaryKeySecondColumnNoConstraint")
++	@Table(name = "pk_fk_second_none")
++	static class SecondColumnNoConstraint {
++		@EmbeddedId
++		CompositeId id;
++
++		@OneToOne(fetch = LAZY, optional = false)
++		@PrimaryKeyJoinColumns({
++				@PrimaryKeyJoinColumn(name = "first_id", referencedColumnName = "first_id"),
++				@PrimaryKeyJoinColumn(name = "second_id", referencedColumnName = "second_id",
++						foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT))
++		})
++		CompositeTarget target;
++	}
++
++	@Entity(name = "PrimaryKeySecondColumnDefinition")
++	@Table(name = "pk_fk_second_definition")
++	static class SecondColumnDefinition {
++		@EmbeddedId
++		CompositeId id;
++
++		@OneToOne(fetch = LAZY, optional = false)
++		@PrimaryKeyJoinColumns({
++				@PrimaryKeyJoinColumn(name = "first_id", referencedColumnName = "first_id"),
++				@PrimaryKeyJoinColumn(name = "second_id", referencedColumnName = "second_id",
++						foreignKey = @jakarta.persistence.ForeignKey(foreignKeyDefinition = "foreign key (first_id, second_id) references pk_fk_composite_target"))
++		})
++		CompositeTarget target;
++	}
++
++	@Entity(name = "PrimaryKeySecondColumnOptions")
++	@Table(name = "pk_fk_second_options")
++	static class SecondColumnOptions {
++		@EmbeddedId
++		CompositeId id;
++
++		@OneToOne(fetch = LAZY, optional = false)
++		@PrimaryKeyJoinColumns({
++				@PrimaryKeyJoinColumn(name = "first_id", referencedColumnName = "first_id"),
++				@PrimaryKeyJoinColumn(name = "second_id", referencedColumnName = "second_id",
++						foreignKey = @jakarta.persistence.ForeignKey(options = "on delete cascade"))
++		})
++		CompositeTarget target;
++	}
++
++	@Entity(name = "ManyToOneWithPrimaryKeyJoinColumn")
++	@Table(name = "pk_fk_many_to_one")
++	static class ManyToOneWithPrimaryKeyJoinColumn {
++		@Id
++		Integer id;
++
++		@ManyToOne(fetch = LAZY, optional = false)
++		@PrimaryKeyJoinColumn(foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT))
++		Target target;
++	}
+ }
