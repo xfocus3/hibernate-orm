@@ -1,0 +1,98 @@
+name: HHH-20448 audit and publish tested simplification
+on:
+  push:
+    branches: [sandcastle/hhh20448-review-20261109]
+    paths: [.github/workflows/hhh20448-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: hhh20448-reviewed-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CANDIDATE: 34c0ba1288ab580aeb0a75b979e7d7281ccf21af
+      EXPECTED_HEAD: 2f42567fdab48dacde118f8038f8e13012232b40
+      PR_BRANCH: fix/HHH-20448-natural-id-trace-logging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 34c0ba1288ab580aeb0a75b979e7d7281ccf21af
+          fetch-depth: 0
+      - name: Verify saved successful validation run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/xfocus3/hibernate-orm/actions/runs/42695560624 > run.json
+          gh api repos/xfocus3/hibernate-orm/actions/artifacts/13709995296 > artifact.json
+          python3 - <<'PY'
+          import json
+          run = json.load(open("run.json"))
+          assert run["id"] == 42695560624
+          assert run["head_sha"] == "df668bde330d9f1cf304aa98631e8ab1c8078f36"
+          assert run["head_branch"] == "sandcastle/hhh20448-review-20261109"
+          assert run["event"] == "push"
+          assert run["status"] == "completed" and run["conclusion"] == "success"
+          assert run["path"] == ".github/workflows/hhh20448-review.yml"
+          artifact = json.load(open("artifact.json"))
+          assert artifact["id"] == 13709995296 and not artifact["expired"]
+          assert artifact["name"] == "java-verification-42695560624"
+          assert artifact["workflow_run"]["id"] == 42695560624
+          assert artifact["digest"] == "sha256:3c8517def669db2770ad65ec3fe8f1480a3396aaabe24a63050c80a215a223bb"
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-verification-42695560624
+          repository: xfocus3/hibernate-orm
+          run-id: 42695560624
+          github-token: ${{ github.token }}
+          path: reports
+      - name: Audit exact tested tree and XML reports
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_HEAD"
+          test "$(git diff --name-only "$EXPECTED_HEAD" "$CANDIDATE")" = "hibernate-core/src/test/java/org/hibernate/orm/test/mapping/naturalid/NaturalIdTraceLoggingTest.java"
+          python3 - <<'PY'
+          import os, pathlib, subprocess, xml.etree.ElementTree as ET
+          root = pathlib.Path("reports")
+          provenance = dict(line.split("=", 1) for line in (root / "verification.txt").read_text().splitlines())
+          tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
+          assert provenance["base"] == os.environ["CANDIDATE"]
+          assert provenance["patch_commit"] == ""
+          assert provenance["tree"] == tree and provenance["tested_tree"] == tree
+          assert not (root / "verified.patch").read_bytes(), "Tested source differs from candidate"
+          files = list(root.rglob("TEST-*.xml"))
+          assert files, "No XML test reports"
+          totals = dict.fromkeys(("tests", "failures", "errors", "skipped"), 0)
+          trace_tests = 0
+          for file in files:
+              suite = ET.parse(file).getroot()
+              assert suite.tag == "testsuite"
+              counts = {key: int(suite.get(key, "0")) for key in totals}
+              assert counts["failures"] == 0 and counts["errors"] == 0
+              for key, value in counts.items():
+                  totals[key] += value
+              if suite.get("name") == "org.hibernate.orm.test.mapping.naturalid.NaturalIdTraceLoggingTest":
+                  assert counts["skipped"] == 0
+                  trace_tests += counts["tests"]
+          assert totals["tests"] > 0 and trace_tests > 0
+          summary = f"Audited source {os.environ['CANDIDATE']} with tree {tree}.\n{totals['tests']} tests, {totals['failures']} failures, {totals['errors']} errors, {totals['skipped']} skipped; {trace_tests} TRACE regression cases.\n"
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
+          PY
+      - name: Publish only to the unchanged PR branch
+        run: |
+          set -euo pipefail
+          current="$(git ls-remote --exit-code origin "refs/heads/$PR_BRANCH" | cut -f1)"
+          test "$current" = "$EXPECTED_HEAD"
+          git diff --exit-code HEAD -- .
+          git push --force-with-lease="refs/heads/$PR_BRANCH:$EXPECTED_HEAD" origin "$CANDIDATE:refs/heads/$PR_BRANCH"
+          published="$(git ls-remote --exit-code origin "refs/heads/$PR_BRANCH" | cut -f1)"
+          test "$published" = "$CANDIDATE"
+          printf 'Published verified candidate %s to %s.\n' "$published" "$PR_BRANCH" >> "$GITHUB_STEP_SUMMARY"
