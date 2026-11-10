@@ -1,0 +1,183 @@
+name: HHH-20757 audit and publish reviewed dirty tracking fix
+on:
+  push:
+    branches: [sandcastle/hhh20757-review-20261110]
+    paths: [.github/workflows/hhh20757-publish.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: hhh20757-reviewed-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPECTED_HEAD: ada95bdda5907d8a87af0eb52c6df1ccaaa387b0
+      PATCH_COMMIT: 2d0278cedb6ab59bc2e953d6067769afc6b83ec1
+      PR_BRANCH: fix-HHH-20757-enhanced-versioned-persist
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ada95bdda5907d8a87af0eb52c6df1ccaaa387b0
+          path: source
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: 2d0278cedb6ab59bc2e953d6067769afc6b83ec1
+          path: request
+          persist-credentials: false
+      - name: Verify RED and GREEN run identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess
+          def api(path):
+              return json.loads(subprocess.check_output(["gh", "api", "repos/xfocus3/hibernate-orm/" + path], text=True))
+          checks = [
+              (42812697749, "a6751b34834c7d041d8b9983f142c31fef654ae6", "hhh20757-red.yml", "failure", 13762992347, "sha256:2af7e19ec3c9fef1a18892c22b789fcdcd766074f03d60cdb781bf909754189f"),
+              (42814002593, "58062bd005c417f3abc74c5c178a847a9f0b2776", "hhh20757-green.yml", "success", 13763094616, "sha256:b172688386e6899bb4881d5081014358a5b62f169bd3ef1a00d91acd9749ed41"),
+          ]
+          for run_id, sha, workflow, conclusion, artifact_id, digest in checks:
+              run = api(f"actions/runs/{run_id}")
+              assert run["id"] == run_id and run["head_sha"] == sha and run["run_attempt"] == 1
+              assert any(item["sha"] == "49c6d695a59a46f3e693555ffe949ea1f0959748" and item["path"].startswith("xfocus3/sandcastle/.github/workflows/java-target-check.yml@") for item in run["referenced_workflows"])
+              assert run["head_branch"] == "sandcastle/hhh20757-review-20261110"
+              assert run["event"] == "push" and run["status"] == "completed"
+              assert run["conclusion"] == conclusion and run["path"] == ".github/workflows/" + workflow
+              artifact = api(f"actions/artifacts/{artifact_id}")
+              assert artifact["id"] == artifact_id and not artifact["expired"]
+              assert artifact["name"] == f"java-verification-{run_id}"
+              assert artifact["workflow_run"]["id"] == run_id and artifact["digest"] == digest
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: 13762992347
+          repository: xfocus3/hibernate-orm
+          run-id: 42812697749
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: red-reports
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: 13763094616
+          repository: xfocus3/hibernate-orm
+          run-id: 42814002593
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: green-reports
+      - name: Audit exact tested source and regression XML
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git -C request rev-parse HEAD)" = "$PATCH_COMMIT"
+          git -C source apply --check ../request/patches/hhh20757-tracker-green.patch
+          git -C source apply --index ../request/patches/hhh20757-tracker-green.patch
+          python3 - <<'PY'
+          import os, pathlib, subprocess, xml.etree.ElementTree as ET
+          def git(*args):
+              return subprocess.check_output(["git", "-C", "source", *args])
+          def text(*args):
+              return git(*args).decode().strip()
+          base = os.environ["EXPECTED_HEAD"]
+          prefix = "hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/"
+          allowed = {
+              "hibernate-core/src/main/java/org/hibernate/event/internal/AbstractSaveEventListener.java",
+              "hibernate-core/src/main/java/org/hibernate/persister/entity/AbstractEntityPersister.java",
+              prefix + "SeededVersionCustomDirtinessStrategyTest.java",
+              prefix + "VersionedDirtyAttributeIndexesTest.java",
+          }
+          assert set(text("diff", "--cached", "--name-only", base).splitlines()) == allowed
+          git("diff", "--check", "--cached")
+          git("diff", "--exit-code", "--cached", base, "--", prefix + "VersionedPersistTest.java")
+          green_tree = text("write-tree")
+          from collections import Counter
+          original_controls = {"persistUnchangedEntity", "persistThenModifyEntity", "modifyAfterCleanFlush", "persistWithVersionSetterSideEffect"}
+          required = {
+              "SeededVersionCustomDirtinessStrategyTest": {"Enhanced:firstFlushAndSubsequentUpdate"},
+              "VersionedDirtyAttributeIndexesTest": {"versionAttributeWithSnapshot", "inheritedVersionAttributeWithSnapshot"},
+              "VersionedPersistTest": original_controls | {"Enhanced:" + name for name in original_controls} | {"assertEntityClassesWereNotEnhanced", "Enhanced:assertEntityClassesWereEnhanced"},
+              "InterceptorTest": {"testCollectionIntercept", "testPropertyIntercept", "testPropertyIntercept2", "testComponentInterceptor", "testStatefulIntercept", "testInitiateIntercept", "testPrepareStatementIntercept", "testPrepareStatementFaultIntercept"},
+              "CustomDirtinessStrategyTest": {"testOnlyCustomStrategy", "testCustomStrategyWithFlushInterceptor", "testOnlyCustomStrategyConsultedOnNonDirty"},
+          }
+          def audit_reports(folder, patch_commit, tree, red):
+              root = pathlib.Path(folder)
+              provenance = dict(line.split("=", 1) for line in (root / "verification.txt").read_text().splitlines())
+              assert provenance["base"] == base and provenance["patch_commit"] == patch_commit
+              assert provenance["tree"] == tree and provenance["tested_tree"] == tree, provenance
+              git("read-tree", base)
+              git("apply", "--cached", "../" + folder + "/verified.patch")
+              assert text("write-tree") == tree, "Saved patch does not reconstruct tested tree"
+              git("read-tree", tree)
+              files = list(root.rglob("TEST-*.xml"))
+              assert files, "Missing XML test reports"
+              totals = dict.fromkeys(("tests", "failures", "errors", "skipped"), 0)
+              core = dict(totals)
+              found = {key: Counter() for key in required}
+              for file in files:
+                  suite = ET.parse(file).getroot()
+                  assert suite.tag == "testsuite"
+                  counts = {key: int(suite.get(key, "0")) for key in totals}
+                  for key, value in counts.items():
+                      totals[key] += value
+                      if "hibernate-core" in file.parts:
+                          core[key] += value
+                  assert counts["errors"] == 0 and counts["skipped"] == 0
+                  if not red:
+                      assert counts["failures"] == 0
+                  for case in suite.findall("testcase"):
+                      class_name = case.get("classname", suite.get("name", "")).rsplit(".", 1)[-1]
+                      if class_name not in required:
+                          continue
+                      name = case.get("name", "").split("(", 1)[0]
+                      found[class_name][name] += 1
+                      assert not case.findall("skipped")
+                      failures = case.findall("failure")
+                      if red:
+                          assert class_name == "SeededVersionCustomDirtinessStrategyTest"
+                          assert len(failures) == 1 and "NullPointerException" in failures[0].get("type", "")
+                          assert "getLoadedValue" in (failures[0].text or "")
+                      else:
+                          assert not failures
+              if red:
+                  assert found["SeededVersionCustomDirtinessStrategyTest"] == Counter(required["SeededVersionCustomDirtinessStrategyTest"])
+                  assert core == {"tests": 1, "failures": 1, "errors": 0, "skipped": 0}, core
+                  assert totals == {"tests": 19, "failures": 1, "errors": 0, "skipped": 0}, totals
+              else:
+                  assert found == {key: Counter(value) for key, value in required.items()}, found
+                  assert core == {"tests": 47, "failures": 0, "errors": 0, "skipped": 0}, core
+                  assert totals == {"tests": 65, "failures": 0, "errors": 0, "skipped": 0}, totals
+              return core, totals
+          green, green_all = audit_reports("green-reports", os.environ["PATCH_COMMIT"], green_tree, False)
+          git("read-tree", base)
+          git("apply", "--cached", "../request/patches/hhh20757-custom-strategy-red.patch")
+          red_tree = text("write-tree")
+          red, red_all = audit_reports("red-reports", "953ee7219fddb11907f4a1c4654dbc085de8d8ce", red_tree, True)
+          git("read-tree", green_tree)
+          git("diff", "--exit-code")
+          pathlib.Path("audited-tree.txt").write_text(green_tree + "\n")
+          summary = f"RED: {red['tests']} test failed with NullPointerException reading a missing loaded snapshot before the fix.\nGREEN: {green['tests']} tests, {green['failures']} failures, {green['errors']} errors, {green['skipped']} skipped. All new regressions, original enhanced/unenhanced setter controls, interceptor and custom-strategy controls passed. The 18 build-tool tests also passed.\nAudited GREEN tree: {green_tree}. Source was unchanged by tests and formatting.\n"
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
+          PY
+      - name: Publish only to the unchanged PR branch
+        working-directory: source
+        run: |
+          set -euo pipefail
+          current="$(git ls-remote --exit-code origin "refs/heads/$PR_BRANCH" | cut -f1)"
+          test "$current" = "$EXPECTED_HEAD"
+          git config user.name "$(git show -s --format=%an "$EXPECTED_HEAD")"
+          git config user.email "$(git show -s --format=%ae "$EXPECTED_HEAD")"
+          git commit -m "HHH-20757 Filter unchanged version dirtiness without disabling tracking"
+          candidate="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$(cat ../audited-tree.txt)"
+          git diff --exit-code HEAD -- .
+          git push --force-with-lease="refs/heads/$PR_BRANCH:$EXPECTED_HEAD" origin "$candidate:refs/heads/$PR_BRANCH"
+          published="$(git ls-remote --exit-code origin "refs/heads/$PR_BRANCH" | cut -f1)"
+          test "$published" = "$candidate"
+          printf 'Published exact audited commit %s to %s.\n' "$published" "$PR_BRANCH" >> "$GITHUB_STEP_SUMMARY"
