@@ -169,7 +169,7 @@ diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhanc
 new file mode 100644
 --- /dev/null
 +++ b/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/VersionedDirtyAttributeIndexesTest.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,107 @@
 +/*
 + * SPDX-License-Identifier: Apache-2.0
 + * Copyright Red Hat Inc. and Hibernate Authors
@@ -241,7 +241,12 @@ new file mode 100644
 +			assertThat( persister.resolveDirtyAttributeIndexes(
 +					current, previous, new String[] { "version" }, session
 +			) ).containsExactly( versionIndex );
++			previous[versionIndex] = 1L;
 +			current[versionIndex] = LazyPropertyInitializer.UNFETCHED_PROPERTY;
++			assertThat( persister.resolveDirtyAttributeIndexes(
++					current, previous, new String[] { "version" }, session
++			) ).containsExactly( versionIndex );
++			previous[versionIndex] = LazyPropertyInitializer.UNFETCHED_PROPERTY;
 +			assertThat( persister.resolveDirtyAttributeIndexes(
 +					current, previous, new String[] { "version" }, session
 +			) ).containsExactly( versionIndex );
