@@ -1,0 +1,107 @@
+name: HHH-20757 inspect exact test evidence
+on:
+  push:
+    branches: [sandcastle/hhh20757-review-20261110]
+    paths: [.github/workflows/hhh20757-audit.yml]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: hhh20757-reviewed-evidence
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPECTED_HEAD: ada95bdda5907d8a87af0eb52c6df1ccaaa387b0
+      PATCH_COMMIT: 2d0278cedb6ab59bc2e953d6067769afc6b83ec1
+      PR_BRANCH: fix-HHH-20757-enhanced-versioned-persist
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ada95bdda5907d8a87af0eb52c6df1ccaaa387b0
+          path: source
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: 2d0278cedb6ab59bc2e953d6067769afc6b83ec1
+          path: request
+          persist-credentials: false
+      - name: Verify RED and GREEN run identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess
+          def api(path):
+              return json.loads(subprocess.check_output(["gh", "api", "repos/xfocus3/hibernate-orm/" + path], text=True))
+          checks = [
+              (42812697749, "a6751b34834c7d041d8b9983f142c31fef654ae6", "hhh20757-red.yml", "failure", 13762992347, "sha256:2af7e19ec3c9fef1a18892c22b789fcdcd766074f03d60cdb781bf909754189f"),
+              (42814002593, "58062bd005c417f3abc74c5c178a847a9f0b2776", "hhh20757-green.yml", "success", 13763094616, "sha256:b172688386e6899bb4881d5081014358a5b62f169bd3ef1a00d91acd9749ed41"),
+          ]
+          for run_id, sha, workflow, conclusion, artifact_id, digest in checks:
+              run = api(f"actions/runs/{run_id}")
+              assert run["id"] == run_id and run["head_sha"] == sha and run["run_attempt"] == 1
+              assert any(item["sha"] == "49c6d695a59a46f3e693555ffe949ea1f0959748" and item["path"].startswith("xfocus3/sandcastle/.github/workflows/java-target-check.yml@") for item in run["referenced_workflows"])
+              assert run["head_branch"] == "sandcastle/hhh20757-review-20261110"
+              assert run["event"] == "push" and run["status"] == "completed"
+              assert run["conclusion"] == conclusion and run["path"] == ".github/workflows/" + workflow
+              artifact = api(f"actions/artifacts/{artifact_id}")
+              assert artifact["id"] == artifact_id and not artifact["expired"]
+              assert artifact["name"] == f"java-verification-{run_id}"
+              assert artifact["workflow_run"]["id"] == run_id and artifact["digest"] == digest
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: 13762992347
+          repository: xfocus3/hibernate-orm
+          run-id: 42812697749
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: red-reports
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: 13763094616
+          repository: xfocus3/hibernate-orm
+          run-id: 42814002593
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: green-reports
+      - name: Inspect source provenance and focused XML evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import pathlib, subprocess, xml.etree.ElementTree as ET
+          def git(*args):
+              return subprocess.check_output(["git", "-C", "source", *args], text=True).strip()
+          lines = []
+          for folder in ("red-reports", "green-reports"):
+              root = pathlib.Path(folder)
+              provenance = dict(line.split("=", 1) for line in (root / "verification.txt").read_text().splitlines())
+              assert provenance["base"] == "ada95bdda5907d8a87af0eb52c6df1ccaaa387b0"
+              git("read-tree", provenance["base"])
+              git("apply", "--cached", "../" + folder + "/verified.patch")
+              assert git("write-tree") == provenance["tested_tree"]
+              lines.append(folder + " " + str(provenance))
+              lines.append("Tested paths: " + git("diff", "--cached", "--name-only", provenance["base"]))
+              totals = dict.fromkeys(("tests", "failures", "errors", "skipped"), 0)
+              for file in sorted(root.rglob("TEST-*.xml")):
+                  suite = ET.parse(file).getroot()
+                  counts = {key: int(suite.get(key, "0")) for key in totals}
+                  for key, value in counts.items():
+                      totals[key] += value
+                  selected = any(name in suite.get("name", "") for name in ("SeededVersionCustomDirtinessStrategyTest", "VersionedDirtyAttributeIndexesTest", "VersionedPersistTest", "InterceptorTest", "CustomDirtinessStrategyTest"))
+                  if selected:
+                      lines.append(suite.get("name", "") + " " + str(counts))
+                      for case in suite.findall("testcase"):
+                          failure = case.find("failure")
+                          lines.append(str({"class": case.get("classname"), "name": case.get("name"), "skipped": case.find("skipped") is not None, "failure_type": failure.get("type") if failure is not None else None, "missing_snapshot_stack": "getLoadedValue" in (failure.text or "") if failure is not None else False}))
+              lines.append("TOTAL " + str(totals))
+          output = "\n\n".join(lines)
+          print(output)
+          import os
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as report:
+              report.write(output + "\n")
+          PYCODE
