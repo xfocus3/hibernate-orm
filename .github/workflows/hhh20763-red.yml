@@ -1,0 +1,15 @@
+name: HHH-20763 reproduce review regressions
+on:
+  push:
+    branches: [sandcastle/hhh20763-review-20261110]
+    paths: [.github/workflows/hhh20763-red.yml]
+permissions:
+  contents: read
+jobs:
+  red:
+    uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
+    with:
+      target_sha: b4c3da8724b7d01ee55871930827c2075c4daebd
+      patch_ref: 1ec18f99bbae6b19bc8d9bd8d61b9767fc2155d7
+      patch_path: patches/hhh20763-red.patch
+      arguments: '[":hibernate-core:test", "--tests", "org.hibernate.orm.test.constraint.PrimaryKeyJoinColumnForeignKeyTest", "--stacktrace"]'
