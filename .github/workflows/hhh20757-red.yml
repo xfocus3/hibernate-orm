@@ -10,7 +10,7 @@ jobs:
     uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
     with:
       target_sha: a4e2a8669f52054ba29dbd6f06542071a5020650
-      patch_ref: fa9b2d2744006a1b0a277bc44c097246ec13682b
+      patch_ref: 67093c30d405af376bf519e46059a8f8b1f6776a
       patch_path: patches/hhh20757-custom-strategy-red.patch
       java_version: '25'
       build_tool: gradle
