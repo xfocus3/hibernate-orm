@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/hibernate-core/src/test/java/org/hibernate/orm/test/bytecode/enhancement/dirty/MutableVersionDirtyTrackingTest.java
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,180 @@
 +/*
 + * SPDX-License-Identifier: Apache-2.0
 + * Copyright Red Hat Inc. and Hibernate Authors
@@ -9,9 +9,11 @@
 +
 +import java.io.Serializable;
 +
-+import org.hibernate.annotations.JavaType;
++import org.hibernate.boot.model.TypeContributions;
++import org.hibernate.boot.model.TypeContributor;
 +import org.hibernate.dialect.H2Dialect;
 +import org.hibernate.engine.spi.SharedSessionContractImplementor;
++import org.hibernate.service.ServiceRegistry;
 +import org.hibernate.type.descriptor.WrapperOptions;
 +import org.hibernate.type.descriptor.java.AbstractClassJavaType;
 +import org.hibernate.type.descriptor.java.MutableMutabilityPlan;
@@ -19,6 +21,7 @@
 +import org.hibernate.type.descriptor.jdbc.IntegerJdbcType;
 +import org.hibernate.type.descriptor.jdbc.JdbcType;
 +import org.hibernate.type.descriptor.jdbc.JdbcTypeIndicators;
++import org.hibernate.type.internal.BasicTypeImpl;
 +
 +import org.hibernate.testing.bytecode.enhancement.extension.BytecodeEnhanced;
 +import org.hibernate.testing.orm.junit.DomainModel;
@@ -38,7 +41,10 @@
 +
 +@JiraKey("HHH-20757")
 +@RequiresDialect(H2Dialect.class)
-+@DomainModel(annotatedClasses = MutableVersionDirtyTrackingTest.VersionedEntity.class)
++@DomainModel(
++		annotatedClasses = MutableVersionDirtyTrackingTest.VersionedEntity.class,
++		typeContributors = MutableVersionDirtyTrackingTest.StampTypeContributor.class
++)
 +@SessionFactory
 +@BytecodeEnhanced(runNotEnhancedAsWell = true, testEnhancedClasses = MutableVersionDirtyTrackingTest.VersionedEntity.class)
 +class MutableVersionDirtyTrackingTest {
@@ -83,7 +89,6 @@
 +		@Id
 +		Integer id;
 +		@Version
-+		@JavaType(StampJavaType.class)
 +		Stamp version;
 +	}
 +
@@ -97,6 +102,19 @@
 +		@Override
 +		public int compareTo(Stamp other) {
 +			return Integer.compare( value, other.value );
++		}
++	}
++
++	public static class StampTypeContributor implements TypeContributor {
++		@Override
++		public void contribute(TypeContributions typeContributions, ServiceRegistry serviceRegistry) {
++			// Version mapping resolves both the Java descriptor and basic type by Java class.
++			final var javaType = new StampJavaType();
++			typeContributions.contributeJavaType( javaType );
++			typeContributions.getTypeConfiguration().getBasicTypeRegistry().register(
++					new BasicTypeImpl<>( javaType, IntegerJdbcType.INSTANCE ),
++					Stamp.class.getName()
++			);
 +		}
 +	}
 +
