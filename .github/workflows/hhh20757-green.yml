@@ -9,8 +9,8 @@ jobs:
   green:
     uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
     with:
-      target_sha: ada95bdda5907d8a87af0eb52c6df1ccaaa387b0
-      patch_ref: 2d0278cedb6ab59bc2e953d6067769afc6b83ec1
+      target_sha: a4e2a8669f52054ba29dbd6f06542071a5020650
+      patch_ref: fa9b2d2744006a1b0a277bc44c097246ec13682b
       patch_path: patches/hhh20757-tracker-green.patch
       java_version: '25'
       build_tool: gradle
