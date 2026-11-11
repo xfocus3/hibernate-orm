@@ -1,210 +1,135 @@
-diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/PrimaryKeyJoinColumnForeignKeyTest.java b/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/PrimaryKeyJoinColumnForeignKeyTest.java
---- a/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/PrimaryKeyJoinColumnForeignKeyTest.java
-+++ b/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/PrimaryKeyJoinColumnForeignKeyTest.java
-@@ -11,9 +11,15 @@
- import org.junit.jupiter.api.BeforeAll;
- import org.junit.jupiter.api.Test;
- 
+--- /dev/null
++++ b/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/AssociationOverrideForeignKeyTest.java
+@@ -0,0 +1,132 @@
++package org.hibernate.orm.test.constraint;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import org.hibernate.dialect.H2Dialect;
++
++import org.hibernate.testing.orm.junit.DomainModel;
++import org.hibernate.testing.orm.junit.JiraKey;
++import org.hibernate.testing.orm.junit.RequiresDialect;
++import org.hibernate.testing.orm.junit.SessionFactory;
++import org.hibernate.testing.orm.junit.SessionFactoryScope;
++import org.junit.jupiter.api.Test;
++
 +import jakarta.persistence.AssociationOverride;
-+import jakarta.persistence.Column;
-+import jakarta.persistence.Embeddable;
-+import jakarta.persistence.EmbeddedId;
- import jakarta.persistence.Entity;
- import jakarta.persistence.Id;
- import jakarta.persistence.JoinColumn;
-+import jakarta.persistence.ManyToOne;
++import jakarta.persistence.Entity;
++import jakarta.persistence.ForeignKey;
++import jakarta.persistence.Id;
++import jakarta.persistence.JoinColumn;
 +import jakarta.persistence.MappedSuperclass;
- import jakarta.persistence.OneToOne;
- import jakarta.persistence.PrimaryKeyJoinColumn;
- import jakarta.persistence.PrimaryKeyJoinColumns;
-@@ -34,7 +40,16 @@
- 		PrimaryKeyJoinColumnForeignKeyTest.ContainerNamedConstraint.class,
- 		PrimaryKeyJoinColumnForeignKeyTest.NestedNamedConstraint.class,
- 		PrimaryKeyJoinColumnForeignKeyTest.JoinColumnNamedConstraint.class,
--		PrimaryKeyJoinColumnForeignKeyTest.JoinColumnNoConstraint.class
-+		PrimaryKeyJoinColumnForeignKeyTest.JoinColumnNoConstraint.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.OverriddenConstraint.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.OverriddenDefaultConstraint.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.NestedNoConstraint.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.CompositeTarget.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.SecondColumnNamedConstraint.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.SecondColumnNoConstraint.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.SecondColumnDefinition.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.SecondColumnOptions.class,
-+		PrimaryKeyJoinColumnForeignKeyTest.ManyToOneWithPrimaryKeyJoinColumn.class
- })
- @SessionFactory
- class PrimaryKeyJoinColumnForeignKeyTest {
-@@ -87,6 +102,50 @@
- 		assertThat( foreignKeys( scope, JoinColumnNoConstraint.class ) ).isEmpty();
- 	}
- 
++import jakarta.persistence.OneToOne;
++import jakarta.persistence.Table;
++
++import static jakarta.persistence.ConstraintMode.NO_CONSTRAINT;
++import static org.assertj.core.api.Assertions.assertThat;
++
++@JiraKey("HHH-20763")
++@RequiresDialect(H2Dialect.class)
++@DomainModel(annotatedClasses = {
++		AssociationOverrideForeignKeyTest.Target.class,
++		AssociationOverrideForeignKeyTest.NestedNoConstraint.class,
++		AssociationOverrideForeignKeyTest.NestedNamedConstraint.class,
++		AssociationOverrideForeignKeyTest.OuterNoConstraint.class,
++		AssociationOverrideForeignKeyTest.OuterNamedConstraint.class,
++		AssociationOverrideForeignKeyTest.DefaultConstraint.class
++})
++@SessionFactory
++class AssociationOverrideForeignKeyTest {
 +	@Test
-+	void testAssociationOverrideConstraint(SessionFactoryScope scope) {
-+		assertThat( foreignKeys( scope, OverriddenConstraint.class ) ).hasSize( 1 );
++	void nestedNoConstraint(SessionFactoryScope scope) {
++		assertThat( importedKeys( scope, "JC_NESTED_NONE" ) ).isEmpty();
 +	}
 +
 +	@Test
-+	void testAssociationOverrideDefaultConstraint(SessionFactoryScope scope) {
-+		assertThat( foreignKeys( scope, OverriddenDefaultConstraint.class ) ).hasSize( 1 );
++	void nestedNamedConstraint(SessionFactoryScope scope) {
++		assertThat( importedKeys( scope, "JC_NESTED_NAMED" ) ).containsExactly( "FK_JC_NESTED" );
 +	}
 +
 +	@Test
-+	void testNestedNoConstraint(SessionFactoryScope scope) {
-+		assertThat( foreignKeys( scope, NestedNoConstraint.class ) ).isEmpty();
++	void outerNoConstraint(SessionFactoryScope scope) {
++		assertThat( importedKeys( scope, "JC_OUTER_NONE" ) ).isEmpty();
 +	}
 +
 +	@Test
-+	void testSecondColumnNamedConstraint(SessionFactoryScope scope) {
-+		assertThat( foreignKeys( scope, SecondColumnNamedConstraint.class ) )
-+				.extracting( ForeignKey::getName ).containsExactly( "FK_PK_SECOND_COLUMN" );
++	void outerNamedConstraint(SessionFactoryScope scope) {
++		assertThat( importedKeys( scope, "JC_OUTER_NAMED" ) ).containsExactly( "FK_JC_OUTER" );
 +	}
 +
 +	@Test
-+	void testSecondColumnNoConstraint(SessionFactoryScope scope) {
-+		assertThat( foreignKeys( scope, SecondColumnNoConstraint.class ) ).isEmpty();
++	void defaultOverrideDoesNotReuseInheritedNoConstraint(SessionFactoryScope scope) {
++		assertThat( importedKeys( scope, "JC_OVERRIDE_DEFAULT" ) ).hasSize( 1 );
 +	}
 +
-+	@Test
-+	void testSecondColumnDefinition(SessionFactoryScope scope) {
-+		assertThat( foreignKeys( scope, SecondColumnDefinition.class ) )
-+				.extracting( ForeignKey::getKeyDefinition )
-+				.containsExactly( "foreign key (first_id, second_id) references pk_fk_composite_target" );
++	private List<String> importedKeys(SessionFactoryScope scope, String tableName) {
++		final List<String> names = new ArrayList<>();
++		scope.inSession( session -> session.doWork( connection -> {
++			try ( var keys = connection.getMetaData().getImportedKeys( null, null, tableName ) ) {
++				while ( keys.next() ) {
++					names.add( keys.getString( "FK_NAME" ) );
++				}
++			}
++		} ) );
++		return names;
 +	}
 +
-+	@Test
-+	void testSecondColumnOptions(SessionFactoryScope scope) {
-+		assertThat( foreignKeys( scope, SecondColumnOptions.class ) )
-+				.extracting( ForeignKey::getOptions ).containsExactly( "on delete cascade" );
++	@Entity(name = "OverrideForeignKeyTarget")
++	@Table(name = "fk_target")
++	static class Target {
++		@Id
++		Integer id;
 +	}
-+
-+	@Test
-+	void testManyToOneIgnoresPrimaryKeyJoinColumn(SessionFactoryScope scope) {
-+		assertThat( foreignKeys( scope, ManyToOneWithPrimaryKeyJoinColumn.class ) ).hasSize( 1 );
-+	}
-+
- 	private Collection<ForeignKey> foreignKeys(SessionFactoryScope scope, Class<?> entityClass) {
- 		return scope.getMetadataImplementor().getEntityBinding( entityClass.getName() )
- 				.getTable().getForeignKeyCollection();
-@@ -192,4 +251,121 @@
- 		@JoinColumn(name = "target_id", foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT))
- 		Target target;
- 	}
 +
 +	@MappedSuperclass
-+	static class InheritedAssociation {
++	static class OwnerBase {
 +		@Id
 +		Integer id;
 +
-+		@OneToOne(fetch = LAZY, optional = false)
-+		@PrimaryKeyJoinColumn(foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT))
++		@OneToOne(optional = false)
++		@JoinColumn(name = "id", insertable = false, updatable = false,
++				foreignKey = @ForeignKey(NO_CONSTRAINT))
 +		Target target;
 +	}
 +
-+	@Entity(name = "OverriddenPrimaryKeyConstraint")
-+	@Table(name = "pk_fk_override")
-+	@AssociationOverride(name = "target", joinColumns = @JoinColumn(name = "id"),
-+			foreignKey = @jakarta.persistence.ForeignKey(CONSTRAINT))
-+	static class OverriddenConstraint extends InheritedAssociation {
++	@Entity(name = "OverrideNestedNoConstraint")
++	@Table(name = "jc_nested_none")
++	@AssociationOverride(name = "target", joinColumns =
++			@JoinColumn(name = "id", insertable = false, updatable = false,
++					foreignKey = @ForeignKey(NO_CONSTRAINT)))
++	static class NestedNoConstraint extends OwnerBase {
 +	}
 +
-+	@Entity(name = "OverriddenPrimaryKeyDefaultConstraint")
-+	@Table(name = "pk_fk_override_default")
-+	@AssociationOverride(name = "target", joinColumns = @JoinColumn(name = "id"))
-+	static class OverriddenDefaultConstraint extends InheritedAssociation {
++	@Entity(name = "OverrideNestedNamedConstraint")
++	@Table(name = "jc_nested_named")
++	@AssociationOverride(name = "target", joinColumns =
++			@JoinColumn(name = "id", insertable = false, updatable = false,
++					foreignKey = @ForeignKey(name = "FK_JC_NESTED")))
++	static class NestedNamedConstraint extends OwnerBase {
 +	}
 +
-+	@Entity(name = "PrimaryKeyNestedNoConstraint")
-+	@Table(name = "pk_fk_nested_none")
-+	static class NestedNoConstraint {
-+		@Id
-+		Integer id;
-+
-+		@OneToOne(fetch = LAZY, optional = false)
-+		@PrimaryKeyJoinColumns(@PrimaryKeyJoinColumn(
-+				foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT)))
-+		Target target;
++	@Entity(name = "OverrideOuterNoConstraint")
++	@Table(name = "jc_outer_none")
++	@AssociationOverride(name = "target", joinColumns =
++			@JoinColumn(name = "id", insertable = false, updatable = false),
++			foreignKey = @ForeignKey(NO_CONSTRAINT))
++	static class OuterNoConstraint extends OwnerBase {
 +	}
 +
-+	@Embeddable
-+	record CompositeId(@Column(name = "first_id") Integer first, @Column(name = "second_id") Integer second) {
++	@Entity(name = "OverrideOuterNamedConstraint")
++	@Table(name = "jc_outer_named")
++	@AssociationOverride(name = "target", joinColumns =
++			@JoinColumn(name = "id", insertable = false, updatable = false),
++			foreignKey = @ForeignKey(name = "FK_JC_OUTER"))
++	static class OuterNamedConstraint extends OwnerBase {
 +	}
 +
-+	@Entity(name = "CompositePrimaryKeyForeignKeyTarget")
-+	@Table(name = "pk_fk_composite_target")
-+	static class CompositeTarget {
-+		@EmbeddedId
-+		CompositeId id;
++	@Entity(name = "OverrideDefaultConstraint")
++	@Table(name = "jc_override_default")
++	@AssociationOverride(name = "target", joinColumns =
++			@JoinColumn(name = "id", insertable = false, updatable = false))
++	static class DefaultConstraint extends OwnerBase {
 +	}
-+
-+	@Entity(name = "PrimaryKeySecondColumnNamedConstraint")
-+	@Table(name = "pk_fk_second_named")
-+	static class SecondColumnNamedConstraint {
-+		@EmbeddedId
-+		CompositeId id;
-+
-+		@OneToOne(fetch = LAZY, optional = false)
-+		@PrimaryKeyJoinColumns({
-+				@PrimaryKeyJoinColumn(name = "first_id", referencedColumnName = "first_id"),
-+				@PrimaryKeyJoinColumn(name = "second_id", referencedColumnName = "second_id",
-+						foreignKey = @jakarta.persistence.ForeignKey(name = "FK_PK_SECOND_COLUMN"))
-+		})
-+		CompositeTarget target;
-+	}
-+
-+	@Entity(name = "PrimaryKeySecondColumnNoConstraint")
-+	@Table(name = "pk_fk_second_none")
-+	static class SecondColumnNoConstraint {
-+		@EmbeddedId
-+		CompositeId id;
-+
-+		@OneToOne(fetch = LAZY, optional = false)
-+		@PrimaryKeyJoinColumns({
-+				@PrimaryKeyJoinColumn(name = "first_id", referencedColumnName = "first_id"),
-+				@PrimaryKeyJoinColumn(name = "second_id", referencedColumnName = "second_id",
-+						foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT))
-+		})
-+		CompositeTarget target;
-+	}
-+
-+	@Entity(name = "PrimaryKeySecondColumnDefinition")
-+	@Table(name = "pk_fk_second_definition")
-+	static class SecondColumnDefinition {
-+		@EmbeddedId
-+		CompositeId id;
-+
-+		@OneToOne(fetch = LAZY, optional = false)
-+		@PrimaryKeyJoinColumns({
-+				@PrimaryKeyJoinColumn(name = "first_id", referencedColumnName = "first_id"),
-+				@PrimaryKeyJoinColumn(name = "second_id", referencedColumnName = "second_id",
-+						foreignKey = @jakarta.persistence.ForeignKey(foreignKeyDefinition = "foreign key (first_id, second_id) references pk_fk_composite_target"))
-+		})
-+		CompositeTarget target;
-+	}
-+
-+	@Entity(name = "PrimaryKeySecondColumnOptions")
-+	@Table(name = "pk_fk_second_options")
-+	static class SecondColumnOptions {
-+		@EmbeddedId
-+		CompositeId id;
-+
-+		@OneToOne(fetch = LAZY, optional = false)
-+		@PrimaryKeyJoinColumns({
-+				@PrimaryKeyJoinColumn(name = "first_id", referencedColumnName = "first_id"),
-+				@PrimaryKeyJoinColumn(name = "second_id", referencedColumnName = "second_id",
-+						foreignKey = @jakarta.persistence.ForeignKey(options = "on delete cascade"))
-+		})
-+		CompositeTarget target;
-+	}
-+
-+	@Entity(name = "ManyToOneWithPrimaryKeyJoinColumn")
-+	@Table(name = "pk_fk_many_to_one")
-+	static class ManyToOneWithPrimaryKeyJoinColumn {
-+		@Id
-+		Integer id;
-+
-+		@ManyToOne(fetch = LAZY, optional = false)
-+		@PrimaryKeyJoinColumn(foreignKey = @jakarta.persistence.ForeignKey(NO_CONSTRAINT))
-+		Target target;
-+	}
- }
++}
