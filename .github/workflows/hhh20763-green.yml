@@ -9,7 +9,7 @@ jobs:
   green:
     uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
     with:
-      target_sha: b4c3da8724b7d01ee55871930827c2075c4daebd
-      patch_ref: 277bf78726b514e444ed796190b5a9e96ce06653
+      target_sha: be02e527f354927d44075ede78e839c96d7c389e
+      patch_ref: 086752f72243d0ce6761f0ece47df772d51e2d13
       patch_path: patches/hhh20763-green.patch
-      arguments: '[":hibernate-core:test", "--tests", "org.hibernate.orm.test.constraint.*", "--tests", "org.hibernate.boot.model.internal.PrimaryKeyJoinColumnForeignKeyResolverTest", "--tests", "org.hibernate.orm.test.schemaupdate.foreignkeys.*", "formatChecks", "--stacktrace"]'
+      arguments: '[":hibernate-core:test", "--tests", "org.hibernate.orm.test.constraint.*", "--tests", "org.hibernate.boot.model.internal.PrimaryKeyJoinColumnForeignKeyResolverTest", "--tests", "org.hibernate.boot.model.internal.AssociationOverrideForeignKeyResolverTest", "--tests", "org.hibernate.orm.test.schemaupdate.foreignkeys.*", "formatChecks", "--stacktrace"]'
