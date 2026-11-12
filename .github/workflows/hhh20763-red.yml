@@ -9,7 +9,7 @@ jobs:
   red:
     uses: xfocus3/sandcastle/.github/workflows/java-target-check.yml@49c6d695a59a46f3e693555ffe949ea1f0959748
     with:
-      target_sha: be02e527f354927d44075ede78e839c96d7c389e
-      patch_ref: 086752f72243d0ce6761f0ece47df772d51e2d13
+      target_sha: 8dbf62a139642b840015472e608433b4c4b7f9cf
+      patch_ref: 0c2b8a589aac0a3cda271036a68746c9ec0f9914
       patch_path: patches/hhh20763-red.patch
-      arguments: '[":hibernate-core:test", "--tests", "org.hibernate.orm.test.constraint.AssociationOverrideForeignKeyTest", "--stacktrace"]'
+      arguments: '[":hibernate-core:test", "--tests", "org.hibernate.orm.test.constraint.XmlOverrideDefaultForeignKeyTest", "--stacktrace"]'
