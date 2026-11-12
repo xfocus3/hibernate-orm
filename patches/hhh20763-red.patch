@@ -1,135 +1,98 @@
+diff --git a/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/XmlOverrideDefaultForeignKeyTest.java b/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/XmlOverrideDefaultForeignKeyTest.java
+new file mode 100644
 --- /dev/null
-+++ b/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/AssociationOverrideForeignKeyTest.java
-@@ -0,0 +1,132 @@
++++ b/hibernate-core/src/test/java/org/hibernate/orm/test/constraint/XmlOverrideDefaultForeignKeyTest.java
+@@ -0,0 +1,93 @@
 +package org.hibernate.orm.test.constraint;
 +
-+import java.util.ArrayList;
-+import java.util.List;
++import java.io.ByteArrayInputStream;
++import java.nio.charset.StandardCharsets;
 +
++import org.hibernate.boot.MetadataSources;
++import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
 +import org.hibernate.dialect.H2Dialect;
 +
-+import org.hibernate.testing.orm.junit.DomainModel;
 +import org.hibernate.testing.orm.junit.JiraKey;
 +import org.hibernate.testing.orm.junit.RequiresDialect;
-+import org.hibernate.testing.orm.junit.SessionFactory;
-+import org.hibernate.testing.orm.junit.SessionFactoryScope;
-+import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.CsvSource;
 +
-+import jakarta.persistence.AssociationOverride;
 +import jakarta.persistence.Entity;
-+import jakarta.persistence.ForeignKey;
 +import jakarta.persistence.Id;
 +import jakarta.persistence.JoinColumn;
 +import jakarta.persistence.MappedSuperclass;
 +import jakarta.persistence.OneToOne;
 +import jakarta.persistence.Table;
 +
-+import static jakarta.persistence.ConstraintMode.NO_CONSTRAINT;
 +import static org.assertj.core.api.Assertions.assertThat;
 +
 +@JiraKey("HHH-20763")
 +@RequiresDialect(H2Dialect.class)
-+@DomainModel(annotatedClasses = {
-+		AssociationOverrideForeignKeyTest.Target.class,
-+		AssociationOverrideForeignKeyTest.NestedNoConstraint.class,
-+		AssociationOverrideForeignKeyTest.NestedNamedConstraint.class,
-+		AssociationOverrideForeignKeyTest.OuterNoConstraint.class,
-+		AssociationOverrideForeignKeyTest.OuterNamedConstraint.class,
-+		AssociationOverrideForeignKeyTest.DefaultConstraint.class
-+})
-+@SessionFactory
-+class AssociationOverrideForeignKeyTest {
-+	@Test
-+	void nestedNoConstraint(SessionFactoryScope scope) {
-+		assertThat( importedKeys( scope, "JC_NESTED_NONE" ) ).isEmpty();
-+	}
-+
-+	@Test
-+	void nestedNamedConstraint(SessionFactoryScope scope) {
-+		assertThat( importedKeys( scope, "JC_NESTED_NAMED" ) ).containsExactly( "FK_JC_NESTED" );
-+	}
-+
-+	@Test
-+	void outerNoConstraint(SessionFactoryScope scope) {
-+		assertThat( importedKeys( scope, "JC_OUTER_NONE" ) ).isEmpty();
-+	}
-+
-+	@Test
-+	void outerNamedConstraint(SessionFactoryScope scope) {
-+		assertThat( importedKeys( scope, "JC_OUTER_NAMED" ) ).containsExactly( "FK_JC_OUTER" );
-+	}
-+
-+	@Test
-+	void defaultOverrideDoesNotReuseInheritedNoConstraint(SessionFactoryScope scope) {
-+		assertThat( importedKeys( scope, "JC_OVERRIDE_DEFAULT" ) ).hasSize( 1 );
-+	}
-+
-+	private List<String> importedKeys(SessionFactoryScope scope, String tableName) {
-+		final List<String> names = new ArrayList<>();
-+		scope.inSession( session -> session.doWork( connection -> {
-+			try ( var keys = connection.getMetaData().getImportedKeys( null, null, tableName ) ) {
-+				while ( keys.next() ) {
-+					names.add( keys.getString( "FK_NAME" ) );
-+				}
++class XmlOverrideDefaultForeignKeyTest {
++	@ParameterizedTest
++	@CsvSource({
++			"NO_CONSTRAINT, omitted, false",
++			"CONSTRAINT, omitted, true",
++			"NO_CONSTRAINT, CONSTRAINT, true",
++			"CONSTRAINT, NO_CONSTRAINT, false"
++	})
++	void xmlOverrideRespectsConstraintMode(String defaultMode, String overrideMode, boolean expectedKey) {
++		final String foreignKey = overrideMode.equals( "omitted" ) ? ""
++				: "<foreign-key constraint-mode=\"" + overrideMode + "\"/>";
++		final String xml = """
++				<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.2">
++				    <entity class="%s" access="FIELD">
++				        <association-override name="target">
++				            <join-column name="id" insertable="false" updatable="false"/>
++				            %s
++				        </association-override>
++				    </entity>
++				</entity-mappings>
++				""".formatted( Owner.class.getName(), foreignKey );
++		final var registry = new StandardServiceRegistryBuilder()
++				.applySetting( "hibernate.connection.url", "jdbc:h2:mem:xml_override_fk" )
++				.applySetting( "hibernate.hbm2ddl.auto", "create-drop" )
++				.applySetting( "hibernate.hbm2ddl.default_constraint_mode", defaultMode )
++				.build();
++		try {
++			final var metadata = new MetadataSources( registry )
++					.addAnnotatedClass( Owner.class )
++					.addAnnotatedClass( Target.class )
++					.addInputStream( new ByteArrayInputStream( xml.getBytes( StandardCharsets.UTF_8 ) ) )
++					.buildMetadata();
++			try ( var factory = metadata.buildSessionFactory() ) {
++				factory.inSession( session -> session.doWork( connection -> {
++					try ( var keys = connection.getMetaData().getImportedKeys( null, null, "XML_OVERRIDE_OWNER" ) ) {
++						assertThat( keys.next() ).isEqualTo( expectedKey );
++						assertThat( keys.next() ).isFalse();
++					}
++				} ) );
 +			}
-+		} ) );
-+		return names;
-+	}
-+
-+	@Entity(name = "OverrideForeignKeyTarget")
-+	@Table(name = "fk_target")
-+	static class Target {
-+		@Id
-+		Integer id;
++		}
++		finally {
++			StandardServiceRegistryBuilder.destroy( registry );
++		}
 +	}
 +
 +	@MappedSuperclass
 +	static class OwnerBase {
 +		@Id
-+		Integer id;
++		int id;
 +
 +		@OneToOne(optional = false)
-+		@JoinColumn(name = "id", insertable = false, updatable = false,
-+				foreignKey = @ForeignKey(NO_CONSTRAINT))
++		@JoinColumn(name = "id", insertable = false, updatable = false)
 +		Target target;
 +	}
 +
-+	@Entity(name = "OverrideNestedNoConstraint")
-+	@Table(name = "jc_nested_none")
-+	@AssociationOverride(name = "target", joinColumns =
-+			@JoinColumn(name = "id", insertable = false, updatable = false,
-+					foreignKey = @ForeignKey(NO_CONSTRAINT)))
-+	static class NestedNoConstraint extends OwnerBase {
++	@Entity
++	@Table(name = "xml_override_owner")
++	static class Owner extends OwnerBase {
 +	}
 +
-+	@Entity(name = "OverrideNestedNamedConstraint")
-+	@Table(name = "jc_nested_named")
-+	@AssociationOverride(name = "target", joinColumns =
-+			@JoinColumn(name = "id", insertable = false, updatable = false,
-+					foreignKey = @ForeignKey(name = "FK_JC_NESTED")))
-+	static class NestedNamedConstraint extends OwnerBase {
-+	}
-+
-+	@Entity(name = "OverrideOuterNoConstraint")
-+	@Table(name = "jc_outer_none")
-+	@AssociationOverride(name = "target", joinColumns =
-+			@JoinColumn(name = "id", insertable = false, updatable = false),
-+			foreignKey = @ForeignKey(NO_CONSTRAINT))
-+	static class OuterNoConstraint extends OwnerBase {
-+	}
-+
-+	@Entity(name = "OverrideOuterNamedConstraint")
-+	@Table(name = "jc_outer_named")
-+	@AssociationOverride(name = "target", joinColumns =
-+			@JoinColumn(name = "id", insertable = false, updatable = false),
-+			foreignKey = @ForeignKey(name = "FK_JC_OUTER"))
-+	static class OuterNamedConstraint extends OwnerBase {
-+	}
-+
-+	@Entity(name = "OverrideDefaultConstraint")
-+	@Table(name = "jc_override_default")
-+	@AssociationOverride(name = "target", joinColumns =
-+			@JoinColumn(name = "id", insertable = false, updatable = false))
-+	static class DefaultConstraint extends OwnerBase {
++	@Entity
++	@Table(name = "xml_override_target")
++	static class Target {
++		@Id
++		int id;
 +	}
 +}
