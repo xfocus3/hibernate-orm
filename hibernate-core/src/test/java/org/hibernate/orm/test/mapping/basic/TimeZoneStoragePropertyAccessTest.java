@@ -56,6 +56,7 @@ public class TimeZoneStoragePropertyAccessTest {
 
 	@Test
 	@DomainModel(annotatedClasses = { PropertyAccess.class, FieldAccess.class })
+	@SessionFactory
 	void mixedAccess(SessionFactoryScope scope) {
 		scope.inTransaction( session -> {
 			final FieldAccess entity = new FieldAccess();
