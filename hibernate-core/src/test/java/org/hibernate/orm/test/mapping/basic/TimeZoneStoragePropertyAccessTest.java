@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SessionFactory
 public class TimeZoneStoragePropertyAccessTest {
 	private static final OffsetDateTime OFFSET = OffsetDateTime.parse( "2026-01-15T12:30:00+05:45" );
-	private static final OffsetTime TIME = OFFSET.toOffsetOffsetTime();
+	private static final OffsetTime TIME = OFFSET.toOffsetTime();
 	private static final ZonedDateTime ZONED = OFFSET.toZonedDateTime();
 
 	@Test
@@ -48,7 +48,7 @@ public class TimeZoneStoragePropertyAccessTest {
 		scope.inTransaction( session -> {
 			final PropertyAccess entity = session.find( PropertyAccess.class, 1 );
 			assertThat( entity.getOffsetDateTime() ).isEqualTo( OFFSET );
-			assertThat( entity.getOffsetOffsetTime() ).isEqualTo( TIME );
+			assertThat( entity.getOffsetTime() ).isEqualTo( TIME );
 			assertThat( entity.getZoned() ).isEqualTo( ZONED );
 			session.remove( entity );
 		} );
@@ -64,7 +64,7 @@ public class TimeZoneStoragePropertyAccessTest {
 		scope.inTransaction( session -> {
 			final PropertyAccess entity = session.find( PropertyAccess.class, 3 );
 			assertThat( entity.getOffsetDateTime() ).isNull();
-			assertThat( entity.getOffsetOffsetTime() ).isNull();
+			assertThat( entity.getOffsetTime() ).isNull();
 			assertThat( entity.getZoned() ).isNull();
 			session.remove( entity );
 		} );
@@ -124,7 +124,7 @@ public class TimeZoneStoragePropertyAccessTest {
 		}
 
 		@TimeZoneStorage(TimeZoneStorageType.COLUMN)
-		public OffsetTime getOffsetOffsetTime() {
+		public OffsetTime getOffsetTime() {
 			return offsetTime;
 		}
 		public void setOffsetTime(OffsetTime offsetTime) {
