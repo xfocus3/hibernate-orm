@@ -24,14 +24,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SessionFactory
 public class TimeZoneStoragePropertyAccessTest {
 	private static final OffsetDateTime OFFSET = OffsetDateTime.parse( "2026-01-15T12:30:00+05:45" );
-	private static final OffsetTime TIME = OFFSET.toOffsetTime();
+	private static final OffsetTime TIME = OFFSET.toOffsetOffsetTime();
 	private static final ZonedDateTime ZONED = OFFSET.toZonedDateTime();
 
 	@Test
 	void columns(DomainModelScope scope) {
 		scope.withHierarchy( PropertyAccess.class, entity -> {
 			assertThat( entity.getTable().getColumns() ).extracting( org.hibernate.mapping.Column::getName )
-					.containsExactlyInAnyOrder( "id", "zoned", "zoned_tz", "offset", "offset_tz", "time", "time_tz" );
+					.containsExactlyInAnyOrder( "id", "zoned", "zoned_tz", "offsetDateTime", "offsetDateTime_tz", "offsetTime", "offsetTime_tz" );
 		} );
 	}
 
@@ -40,16 +40,32 @@ public class TimeZoneStoragePropertyAccessTest {
 		scope.inTransaction( session -> {
 			final PropertyAccess entity = new PropertyAccess();
 			entity.setId( 1 );
-			entity.setOffset( OFFSET );
-			entity.setTime( TIME );
+			entity.setOffsetDateTime( OFFSET );
+			entity.setOffsetTime( TIME );
 			entity.setZoned( ZONED );
 			session.persist( entity );
 		} );
 		scope.inTransaction( session -> {
 			final PropertyAccess entity = session.find( PropertyAccess.class, 1 );
-			assertThat( entity.getOffset() ).isEqualTo( OFFSET );
-			assertThat( entity.getTime() ).isEqualTo( TIME );
+			assertThat( entity.getOffsetDateTime() ).isEqualTo( OFFSET );
+			assertThat( entity.getOffsetOffsetTime() ).isEqualTo( TIME );
 			assertThat( entity.getZoned() ).isEqualTo( ZONED );
+			session.remove( entity );
+		} );
+	}
+
+	@Test
+	void nullValues(SessionFactoryScope scope) {
+		scope.inTransaction( session -> {
+			final PropertyAccess entity = new PropertyAccess();
+			entity.setId( 3 );
+			session.persist( entity );
+		} );
+		scope.inTransaction( session -> {
+			final PropertyAccess entity = session.find( PropertyAccess.class, 3 );
+			assertThat( entity.getOffsetDateTime() ).isNull();
+			assertThat( entity.getOffsetOffsetTime() ).isNull();
+			assertThat( entity.getZoned() ).isNull();
 			session.remove( entity );
 		} );
 	}
@@ -58,18 +74,19 @@ public class TimeZoneStoragePropertyAccessTest {
 	@DomainModel(annotatedClasses = { PropertyAccess.class, FieldAccess.class })
 	@SessionFactory
 	void mixedAccess(SessionFactoryScope scope) {
+		roundTrip( scope );
 		scope.inTransaction( session -> {
 			final FieldAccess entity = new FieldAccess();
 			entity.id = 2;
-			entity.offset = OFFSET;
-			entity.time = TIME;
+			entity.offsetDateTime = OFFSET;
+			entity.offsetTime = TIME;
 			entity.zoned = ZONED;
 			session.persist( entity );
 		} );
 		scope.inTransaction( session -> {
 			final FieldAccess entity = session.find( FieldAccess.class, 2 );
-			assertThat( entity.offset ).isEqualTo( OFFSET );
-			assertThat( entity.time ).isEqualTo( TIME );
+			assertThat( entity.offsetDateTime ).isEqualTo( OFFSET );
+			assertThat( entity.offsetTime ).isEqualTo( TIME );
 			assertThat( entity.zoned ).isEqualTo( ZONED );
 			session.remove( entity );
 		} );
@@ -79,24 +96,40 @@ public class TimeZoneStoragePropertyAccessTest {
 	public static class PropertyAccess {
 		private Integer id;
 		private ZonedDateTime zoned;
-		private OffsetDateTime offset;
-		private OffsetTime time;
+		private OffsetDateTime offsetDateTime;
+		private OffsetTime offsetTime;
 
 		@Id
-		public Integer getId() { return id; }
-		public void setId(Integer id) { this.id = id; }
+		public Integer getId() {
+			return id;
+		}
+		public void setId(Integer id) {
+			this.id = id;
+		}
 
 		@TimeZoneStorage(TimeZoneStorageType.COLUMN)
-		public ZonedDateTime getZoned() { return zoned; }
-		public void setZoned(ZonedDateTime zoned) { this.zoned = zoned; }
+		public ZonedDateTime getZoned() {
+			return zoned;
+		}
+		public void setZoned(ZonedDateTime zoned) {
+			this.zoned = zoned;
+		}
 
 		@TimeZoneStorage(TimeZoneStorageType.COLUMN)
-		public OffsetDateTime getOffset() { return offset; }
-		public void setOffset(OffsetDateTime offset) { this.offset = offset; }
+		public OffsetDateTime getOffsetDateTime() {
+			return offsetDateTime;
+		}
+		public void setOffsetDateTime(OffsetDateTime offsetDateTime) {
+			this.offsetDateTime = offsetDateTime;
+		}
 
 		@TimeZoneStorage(TimeZoneStorageType.COLUMN)
-		public OffsetTime getTime() { return time; }
-		public void setTime(OffsetTime time) { this.time = time; }
+		public OffsetTime getOffsetOffsetTime() {
+			return offsetTime;
+		}
+		public void setOffsetTime(OffsetTime offsetTime) {
+			this.offsetTime = offsetTime;
+		}
 	}
 
 	@Entity(name = "FieldAccess")
@@ -106,8 +139,8 @@ public class TimeZoneStoragePropertyAccessTest {
 		@TimeZoneStorage(TimeZoneStorageType.COLUMN)
 		private ZonedDateTime zoned;
 		@TimeZoneStorage(TimeZoneStorageType.COLUMN)
-		private OffsetDateTime offset;
+		private OffsetDateTime offsetDateTime;
 		@TimeZoneStorage(TimeZoneStorageType.COLUMN)
-		private OffsetTime time;
+		private OffsetTime offsetTime;
 	}
 }
