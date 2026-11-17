@@ -21,7 +21,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Jira("https://hibernate.atlassian.net/browse/HHH-21189")
 @DomainModel(annotatedClasses = TimeZoneStoragePropertyAccessTest.PropertyAccess.class)
-@SessionFactory
 public class TimeZoneStoragePropertyAccessTest {
 	private static final OffsetDateTime OFFSET = OffsetDateTime.parse( "2026-01-15T12:30:00+05:45" );
 	private static final OffsetTime TIME = OFFSET.toOffsetTime();
@@ -36,6 +35,7 @@ public class TimeZoneStoragePropertyAccessTest {
 	}
 
 	@Test
+	@SessionFactory
 	void roundTrip(SessionFactoryScope scope) {
 		scope.inTransaction( session -> {
 			final PropertyAccess entity = new PropertyAccess();
@@ -55,6 +55,7 @@ public class TimeZoneStoragePropertyAccessTest {
 	}
 
 	@Test
+	@SessionFactory
 	void nullValues(SessionFactoryScope scope) {
 		scope.inTransaction( session -> {
 			final PropertyAccess entity = new PropertyAccess();
