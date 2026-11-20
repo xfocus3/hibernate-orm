@@ -22,6 +22,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Key-based pagination with a case-insensitive order must look for
@@ -91,6 +93,47 @@ public class KeyBasedPagingIgnoreCaseTest {
 			}
 		} );
 		assertEquals( List.of( 1, 2 ), ids );
+	}
+
+	@Test
+	public void nullableConvertedKey(SessionFactoryScope scope) {
+		scope.inTransaction( session -> {
+			session.persist( new Label( 3, "A" ) );
+			session.persist( new Label( 4, null ) );
+			session.persist( new Label( 5, null ) );
+			session.persist( new Label( 6, null ) );
+			session.persist( new Label( 7, "a" ) );
+		} );
+
+		final var order = Order.asc( Label.class, "code" ).ignoringCase();
+		assertLabelTraversal( scope, order.withNullsFirst(),
+				List.of( List.of( 4, 5 ), List.of( 6, 1 ), List.of( 3, 7 ), List.of( 2 ) ) );
+		assertLabelTraversal( scope, order.withNullsLast(),
+				List.of( List.of( 1, 3 ), List.of( 7, 2 ), List.of( 4, 5 ), List.of( 6 ) ) );
+	}
+
+	private static void assertLabelTraversal(
+			SessionFactoryScope scope, Order<Label> order, List<List<Integer>> expectedPages) {
+		scope.inSession( session -> {
+			final var query = session.createSelectionQuery( "from Label", Label.class );
+			var page = query.getKeyedResultList( Page.first( 2 ).keyedBy( List.of(
+					order, Order.asc( Label.class, "id" )
+			) ) );
+			assertEquals( expectedPages.get( 0 ), page.getResultList().stream().map( label -> label.id ).toList() );
+			assertTrue( page.isFirstPage() );
+			for ( int i = 1; i < expectedPages.size(); i++ ) {
+				assertNotNull( page.getNextPage() );
+				page = query.getKeyedResultList( page.getNextPage() );
+				assertEquals( expectedPages.get( i ), page.getResultList().stream().map( label -> label.id ).toList() );
+			}
+			assertTrue( page.isLastPage() );
+			for ( int i = expectedPages.size() - 2; i >= 0; i-- ) {
+				assertNotNull( page.getPreviousPage() );
+				page = query.getKeyedResultList( page.getPreviousPage() );
+				assertEquals( expectedPages.get( i ), page.getResultList().stream().map( label -> label.id ).toList() );
+			}
+			assertTrue( page.isFirstPage() );
+		} );
 	}
 
 	private static List<Integer> idsByPage(SessionFactoryScope scope, KeyedPage<Word> firstPage) {
