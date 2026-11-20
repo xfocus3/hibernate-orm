@@ -1,6 +1,7 @@
 package org.hibernate.query.internal;
 
 import jakarta.annotation.Nonnull;
+import jakarta.persistence.criteria.Nulls;
 import org.hibernate.query.IllegalQueryOperationException;
 import org.hibernate.query.Order;
 import org.hibernate.query.criteria.JpaCompoundSelection;
@@ -71,6 +72,15 @@ public class KeyBasedPagination {
 			final var order = keyDefinition.get( i );
 			final var path = keyPaths.get( i );
 			final var keyValue = keyValues.get( i );
+			if ( keyValue == null ) {
+				final var after = order.nullPrecedence() == Nulls.FIRST
+						? builder.isNotNull( path )
+						: builder.disjunction();
+				restriction = restriction == null
+						? after
+						: builder.or( after, builder.and( builder.isNull( path ), restriction ) );
+				continue;
+			}
 			final SqmExpression<?> key;
 			final SqmExpression<?> value;
 			if ( order.caseSensitive() ) {
@@ -88,8 +98,10 @@ public class KeyBasedPagination {
 				case ASCENDING -> GREATER_THAN;
 				case DESCENDING -> LESS_THAN;
 			};
-			final var after =
-					builder.comparison( key, operator, value );
+			final var comparison = builder.comparison( key, operator, value );
+			final var after = order.nullPrecedence() == Nulls.LAST
+					? builder.or( comparison, builder.isNull( path ) )
+					: comparison;
 			restriction =
 					restriction == null
 							? after
