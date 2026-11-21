@@ -24,7 +24,7 @@ public class ImplicitCompleteEntityMappingTests {
 		final var entity = metadata.getEntityBinding( PropertyAccessEntity.class.getName() );
 		assertInstanceOf( BasicValue.class, entity.getProperty( "name" ).getValue() );
 
-		final var incoming = mapping( "transient-property.xml", "PROPERTY", "<transient name="name"/>" );
+		final var incoming = mapping( "transient-property.xml", "PROPERTY", "<transient name='name'/>" );
 		final var sources = new MetadataSources( scope.getRegistry() ).addInputStream( previous ).addInputStream( incoming );
 		final var exception = assertThrows( MappingException.class, sources::buildMetadata );
 		assertEquals( incoming.getStreamName(), exception.getOrigin().getName() );
@@ -34,7 +34,7 @@ public class ImplicitCompleteEntityMappingTests {
 
 	@Test
 	void testEquivalentCompleteMappingsCanBothDeclareAttributeTransient(ServiceRegistryScope scope) {
-		final String attribute = "<transient name="name"/>";
+		final String attribute = "<transient name='name'/>";
 		final var metadata = new MetadataSources( scope.getRegistry() )
 				.addInputStream( mapping( "transient.xml", "FIELD", attribute ) )
 				.addInputStream( mapping( "transient-copy.xml", "FIELD", attribute ) )
@@ -45,10 +45,10 @@ public class ImplicitCompleteEntityMappingTests {
 	}
 
 	private static ByteArrayInputStreamAccess mapping(String origin, String access, String attributes) {
-		final String mapping = "<entity-mappings xmlns="http://www.hibernate.org/xsd/orm/mapping" version="7.0">"
-				+ "<entity class="" + PropertyAccessEntity.class.getName() + "" name="OriginalEntity""
-				+ " metadata-complete="true" access="" + access + "">"
-				+ "<attributes><id name="id"/>" + attributes + "</attributes>"
+		final String mapping = "<entity-mappings xmlns='http://www.hibernate.org/xsd/orm/mapping' version='7.0'>"
+				+ "<entity class='" + PropertyAccessEntity.class.getName() + "' name='OriginalEntity'"
+				+ " metadata-complete='true' access='" + access + "'>"
+				+ "<attributes><id name='id'/>" + attributes + "</attributes>"
 				+ "</entity></entity-mappings>";
 		return new ByteArrayInputStreamAccess( origin, mapping.getBytes( UTF_8 ) );
 	}
