@@ -115,13 +115,13 @@ public class EntityMappingReplacementTests {
 			String additionalAttributes) {
 		final String mapping = """
 				<entity-mappings xmlns="http://www.hibernate.org/xsd/orm/mapping" version="7.0">
-				    <package>org.hibernate.orm.test.boot.models.xml</package>
-				    <entity class="SimpleEntity" %s metadata-complete="true" access="FIELD">
-				        <attributes>
-				            <id name="id"/>
-				            %s
-				        </attributes>
-				    </entity>
+					<package>org.hibernate.orm.test.boot.models.xml</package>
+					<entity class="SimpleEntity" %s metadata-complete="true" access="FIELD">
+						<attributes>
+							<id name="id"/>
+							%s
+						</attributes>
+					</entity>
 				</entity-mappings>
 				""".formatted( entityNameAttribute, additionalAttributes );
 		return new ByteArrayInputStreamAccess( origin, mapping.getBytes( UTF_8 ) );
