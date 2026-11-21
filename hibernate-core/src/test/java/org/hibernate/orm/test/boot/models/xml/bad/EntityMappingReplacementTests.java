@@ -2,13 +2,16 @@ package org.hibernate.orm.test.boot.models.xml.bad;
 
 import org.hibernate.boot.MappingException;
 import org.hibernate.boot.MetadataSources;
+import org.hibernate.boot.archive.internal.ByteArrayInputStreamAccess;
 import org.hibernate.orm.test.boot.models.xml.SimpleEntity;
 import org.hibernate.testing.orm.junit.ServiceRegistry;
 import org.hibernate.testing.orm.junit.ServiceRegistryScope;
 import org.junit.jupiter.api.Test;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ServiceRegistry
 public class EntityMappingReplacementTests {
@@ -48,6 +51,80 @@ public class EntityMappingReplacementTests {
 	@Test
 	void testPersistenceUnitCompletenessAppliesToEveryDocument(ServiceRegistryScope scope) {
 		assertReplacementRejected( scope, "global-complete", "OriginalEntity", ", removed basic attribute 'name'" );
+	}
+
+	@Test
+	void testEquivalentUnnamedCompleteMappingDoesNotForgetExplicitName(ServiceRegistryScope scope) {
+		final String basic = "<basic name=\"name\"/>";
+		final var named = completeMapping( "named.xml", "name=\"SimpleEntity\"", basic );
+		final var unnamed = completeMapping( "equivalent-unnamed.xml", "", basic );
+		final var sources = new MetadataSources( scope.getRegistry() ).addInputStream( named ).addInputStream( unnamed );
+		final var entity = sources.buildMetadata().getEntityBinding( SimpleEntity.class.getName() );
+		assertEquals( "SimpleEntity", entity.getJpaEntityName() );
+		assertCompleteReplacementRejected(
+				new MetadataSources( scope.getRegistry() ).addInputStream( named ).addInputStream( unnamed ),
+				completeMapping( "renamed.xml", "name=\"Renamed\"", basic ),
+				"entity names 'SimpleEntity' and 'Renamed'"
+		);
+	}
+
+	@Test
+	void testCompleteMappingCannotRemoveNaturalIdBasicAttribute(ServiceRegistryScope scope) {
+		final var naturalId = completeMapping(
+				"natural-id.xml",
+				"name=\"OriginalEntity\"",
+				"<natural-id><basic name=\"name\"/></natural-id>"
+		);
+		final var sources = new MetadataSources( scope.getRegistry() ).addInputStream( naturalId );
+		final var entity = sources.buildMetadata().getEntityBinding( SimpleEntity.class.getName() );
+		assertTrue( entity.getProperty( "name" ).isNaturalIdentifier() );
+		assertCompleteReplacementRejected(
+				new MetadataSources( scope.getRegistry() ).addInputStream( naturalId ),
+				completeMapping( "transient-natural-id.xml", "name=\"OriginalEntity\"", "<transient name=\"name\"/>" ),
+				"removed basic attribute 'name'"
+		);
+	}
+
+	@Test
+	void testCompleteMappingCannotRemoveImplicitFieldBasicAttribute(ServiceRegistryScope scope) {
+		final var implicit = completeMapping( "implicit.xml", "name=\"OriginalEntity\"", "" );
+		final var sources = new MetadataSources( scope.getRegistry() ).addInputStream( implicit );
+		final var entity = sources.buildMetadata().getEntityBinding( SimpleEntity.class.getName() );
+		assertEquals( "name", entity.getProperty( "name" ).getName() );
+		assertCompleteReplacementRejected(
+				new MetadataSources( scope.getRegistry() ).addInputStream( implicit ),
+				completeMapping( "transient-implicit.xml", "name=\"OriginalEntity\"", "<transient name=\"name\"/>" ),
+				"removed basic attribute 'name'"
+		);
+	}
+
+	private static void assertCompleteReplacementRejected(
+			MetadataSources sources,
+			ByteArrayInputStreamAccess incoming,
+			String diagnostic) {
+		sources.addInputStream( incoming );
+		final var exception = assertThrows( MappingException.class, sources::buildMetadata );
+		assertEquals( incoming.getStreamName(), exception.getOrigin().getName() );
+		assertTrue( exception.getMessage().contains( SimpleEntity.class.getName() ) );
+		assertTrue( exception.getMessage().contains( diagnostic ) );
+	}
+
+	private static ByteArrayInputStreamAccess completeMapping(
+			String origin,
+			String entityNameAttribute,
+			String additionalAttributes) {
+		final String mapping = """
+				<entity-mappings xmlns="http://www.hibernate.org/xsd/orm/mapping" version="7.0">
+				    <package>org.hibernate.orm.test.boot.models.xml</package>
+				    <entity class="SimpleEntity" %s metadata-complete="true" access="FIELD">
+				        <attributes>
+				            <id name="id"/>
+				            %s
+				        </attributes>
+				    </entity>
+				</entity-mappings>
+				""".formatted( entityNameAttribute, additionalAttributes );
+		return new ByteArrayInputStreamAccess( origin, mapping.getBytes( UTF_8 ) );
 	}
 
 	private static void assertMergedMapping(ServiceRegistryScope scope, String mapping, String entityName) {
