@@ -36,7 +36,7 @@ public class XmlProcessor {
 			RootMappingDefaults mappingDefaults) {
 		final boolean xmlMappingsGloballyComplete = persistenceUnitMetadata.areXmlMappingsComplete();
 		final var xmlOverlay = new XmlProcessingResultImpl();
-		final Map<String, JaxbEntityImpl> completeEntitiesByClass = new HashMap<>();
+		final Map<String, CompleteEntity> completeEntitiesByClass = new HashMap<>();
 
 		xmlPreProcessingResult.getDocuments().forEach( xmlDocument -> {
 			final var xmlDocumentContext = new XmlDocumentContextImpl(
@@ -78,10 +78,16 @@ public class XmlProcessor {
 					// Complete mappings clear previous metadata. Partial overlays are applied later.
 					if ( StringHelper.isNotEmpty( jaxbEntity.getClazz() ) ) {
 						final String className = determineClassName( jaxbRoot, jaxbEntity );
-						final var previous = completeEntitiesByClass.put( className, jaxbEntity );
+						final var previous = completeEntitiesByClass.get( className );
+						final String incomingExplicitName = explicitEntityName( jaxbEntity );
 						if ( previous != null ) {
-							checkCompleteEntityReplacement( className, previous, jaxbEntity, xmlDocument );
+							checkCompleteEntityReplacement( className, previous, jaxbEntity, incomingExplicitName, xmlDocument );
 						}
+						// An unnamed copy with the same effective name must not erase the explicit name.
+						final String establishedName = incomingExplicitName != null || previous == null
+								? incomingExplicitName
+								: previous.explicitName();
+						completeEntitiesByClass.put( className, new CompleteEntity( jaxbEntity, establishedName ) );
 					}
 					processCompleteEntity( jaxbRoot, jaxbEntity, xmlDocumentContext );
 				}
@@ -98,14 +104,16 @@ public class XmlProcessor {
 
 	private static void checkCompleteEntityReplacement(
 			String className,
-			JaxbEntityImpl previous,
+			CompleteEntity previous,
 			JaxbEntityImpl incoming,
+			String incomingExplicitName,
 			XmlDocument document) {
-		final String previousName = effectiveEntityName( className, previous );
-		final String incomingName = effectiveEntityName( className, incoming );
-		final String removedAttribute = removedBasicAttribute( previous, incoming );
+		final String defaultName = StringHelper.unqualify( className );
+		final String previousName = previous.explicitName() != null ? previous.explicitName() : defaultName;
+		final String incomingName = incomingExplicitName != null ? incomingExplicitName : defaultName;
+		final String removedAttribute = removedBasicAttribute( previous.mapping(), incoming );
 		// A first explicit name may replace the default; an established explicit name may not be lost.
-		final boolean losesExplicitName = hasExplicitName( previous ) && !previousName.equals( incomingName );
+		final boolean losesExplicitName = previous.explicitName() != null && !previousName.equals( incomingName );
 		if ( losesExplicitName || removedAttribute != null ) {
 			throw new MappingException(
 					"Conflicting complete XML mappings for entity class '" + className
@@ -116,13 +124,9 @@ public class XmlProcessor {
 		}
 	}
 
-	private static String effectiveEntityName(String className, JaxbEntityImpl entity) {
-		return hasExplicitName( entity ) ? entity.getName() : StringHelper.unqualify( className );
-	}
-
-	private static boolean hasExplicitName(JaxbEntityImpl entity) {
+	private static String explicitEntityName(JaxbEntityImpl entity) {
 		final String name = entity.getName();
-		return name != null && !name.isBlank();
+		return name == null || name.isBlank() ? null : name;
 	}
 
 	private static String removedBasicAttribute(JaxbEntityImpl previous, JaxbEntityImpl incoming) {
@@ -130,13 +134,25 @@ public class XmlProcessor {
 		final var incomingAttributes = incoming.getAttributes();
 		if ( previousAttributes != null && incomingAttributes != null ) {
 			for ( var transientAttribute : incomingAttributes.getTransients() ) {
+				final String name = transientAttribute.getName();
 				for ( var previousBasic : previousAttributes.getBasicAttributes() ) {
-					if ( transientAttribute.getName().equals( previousBasic.getName() ) ) {
-						return previousBasic.getName();
+					if ( name.equals( previousBasic.getName() ) ) {
+						return name;
+					}
+				}
+				final var naturalId = previousAttributes.getNaturalId();
+				if ( naturalId != null ) {
+					for ( var previousBasic : naturalId.getBasicAttributes() ) {
+						if ( name.equals( previousBasic.getName() ) ) {
+							return name;
+						}
 					}
 				}
 			}
 		}
 		return null;
+	}
+
+	private record CompleteEntity(JaxbEntityImpl mapping, String explicitName) {
 	}
 }
