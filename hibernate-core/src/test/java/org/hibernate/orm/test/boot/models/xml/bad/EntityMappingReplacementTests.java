@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ServiceRegistry
 public class EntityMappingReplacementTests {
@@ -38,17 +37,17 @@ public class EntityMappingReplacementTests {
 
 	@Test
 	void testCompleteMappingCannotReplaceEarlierMappingWithSameName(ServiceRegistryScope scope) {
-		assertReplacementRejected( scope, "complete-same-name" );
+		assertReplacementRejected( scope, "complete-same-name", "OriginalEntity", ", removed basic attribute 'name'" );
 	}
 
 	@Test
 	void testUnnamedCompleteMappingCannotReplaceEarlierMapping(ServiceRegistryScope scope) {
-		assertReplacementRejected( scope, "complete-unnamed" );
+		assertReplacementRejected( scope, "complete-unnamed", "SimpleEntity", "" );
 	}
 
 	@Test
 	void testPersistenceUnitCompletenessAppliesToEveryDocument(ServiceRegistryScope scope) {
-		assertReplacementRejected( scope, "global-complete" );
+		assertReplacementRejected( scope, "global-complete", "OriginalEntity", ", removed basic attribute 'name'" );
 	}
 
 	private static void assertMergedMapping(ServiceRegistryScope scope, String mapping, String entityName) {
@@ -60,16 +59,25 @@ public class EntityMappingReplacementTests {
 		assertEquals( "merged_name", entity.getProperty( "name" ).getValue().getColumns().get( 0 ).getName() );
 	}
 
-	private static void assertReplacementRejected(ServiceRegistryScope scope, String mapping) {
+	private static void assertReplacementRejected(
+			ServiceRegistryScope scope,
+			String mapping,
+			String incomingName,
+			String attributeDetail) {
 		final var exception = assertThrows( MappingException.class, () -> sources( scope, mapping ).buildMetadata() );
 		assertEquals( resource( mapping ), exception.getOrigin().getName() );
-		assertTrue( exception.getMessage().contains( SimpleEntity.class.getName() ) );
-		assertTrue( exception.getMessage().contains( "OriginalEntity" ) );
+		assertEquals(
+				"Conflicting complete XML mappings for entity class '" + SimpleEntity.class.getName()
+						+ "': entity names 'OriginalEntity' and '" + incomingName
+						+ "'" + attributeDetail + " [" + resource( mapping ) + "]",
+				exception.getMessage()
+		);
 	}
 
 	private static MetadataSources sources(ServiceRegistryScope scope, String mapping) {
+		final String firstMapping = mapping.startsWith( "partial-" ) ? "first" : "first-complete";
 		return new MetadataSources( scope.getRegistry() )
-				.addResource( resource( mapping.startsWith( "complete-" ) ? "first-complete" : "first" ) )
+				.addResource( resource( firstMapping ) )
 				.addResource( resource( mapping ) );
 	}
 

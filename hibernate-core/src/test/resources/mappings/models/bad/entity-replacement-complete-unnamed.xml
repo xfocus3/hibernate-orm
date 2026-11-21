@@ -3,10 +3,10 @@
     <entity class="SimpleEntity" metadata-complete="true" access="FIELD">
         <attributes>
             <id name="id">
-                <column name="replacement_id"/>
+                <column name="original_id"/>
             </id>
             <basic name="name">
-                <column name="replacement_name"/>
+                <column name="original_name"/>
             </basic>
         </attributes>
     </entity>

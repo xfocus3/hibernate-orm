@@ -6,11 +6,9 @@
     <entity class="SimpleEntity" name="OriginalEntity" access="FIELD">
         <attributes>
             <id name="id">
-                <column name="replacement_id"/>
+                <column name="original_id"/>
             </id>
-            <basic name="name">
-                <column name="replacement_name"/>
-            </basic>
+            <transient name="name"/>
         </attributes>
     </entity>
 </entity-mappings>
